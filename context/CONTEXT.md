@@ -62,5 +62,8 @@ Decisions and progress go in `LOG.md` (append-only).
 
 ## Tools researched
 
+- [Product requirements](./REQUIREMENTS.md): hackathon scope, acceptance checks and optional Apollo checkbox.
+- [Technical design and implementation status](./TECHNICAL_DESIGN.md): research, approvals, structured staff/branding and container-generated PPTX/DOCX/PDF downloads.
+
 - **Sendspark** (videos): `SENDSPARK.md`. API + webhooks on Growth ($99/mo); fills variables into one recorded base video; async, poll or webhook.
 - **Apollo** (input approach 2): `APOLLO.md`. Org enrich (1 credit) → people search (free, names obfuscated) → people match (1 credit email, +8 mobile). Firm search: 1 credit/page, **allowed** on our plan (needs a law-practice filter to drop recruiters). Probe: `Hack_A_API/api/apollo_probe.py`.
