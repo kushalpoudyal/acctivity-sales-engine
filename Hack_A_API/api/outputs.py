@@ -2,6 +2,7 @@ import io
 import json
 import logging
 import os
+import time
 import zipfile
 from datetime import datetime, timezone
 from typing import Literal
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
 
+import sendspark
 from decks import DeckError, validate_pptx
 from documents import RENDERERS, write_copy
 from model_stream import ModelStreamError
@@ -25,12 +27,15 @@ FORMATS = {
     "docx": ("proposal.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
     "pdf": ("welcome.pdf", "application/pdf"),
 }
-OutputFormat = Literal["pptx", "docx", "pdf"]
+# "video" is a Sendspark share link rather than a saved file.
+OutputFormat = Literal["pptx", "docx", "pdf", "video"]
+VIDEO_POLL_SECONDS = 15
+VIDEO_TIMEOUT_SECONDS = 900
 
 
 class OutputRequest(BaseModel):
     approval_id: int
-    formats: list[OutputFormat] = Field(min_length=1, max_length=3)
+    formats: list[OutputFormat] = Field(min_length=1, max_length=4)
     instructions: str = Field(default="", max_length=6000)
     logo_id: int | None = None
     request_key: UUID
@@ -111,6 +116,38 @@ def generate_outputs(job_id: int, job: dict):
             save_file(job_id, format, None, f"Could not build the {format.upper()} file. See the API log.")
 
 
+def save_video(job_id: int, url: str | None, error: str | None):
+    timestamp = datetime.now(timezone.utc).isoformat()
+    with database() as db:
+        db.execute("""UPDATE output_files SET status=?,url=?,error=?,stage=?,updated_at=?,finished_at=?
+                      WHERE job_id=? AND format='video'""",
+                   ("ready" if url else "failed", url, error, "Video ready" if url else "Failed",
+                    timestamp, timestamp, job_id))
+
+
+def generate_video(job_id: int, job: dict):
+    """Sendspark renders the campaign video with the firm's name; we poll (free) until its share page is ready."""
+    snapshot = json.loads(job["snapshot"])
+    email = sendspark.prospect_email(snapshot["domain"])
+    file_progress(job_id, "video", "Sending the firm name to Sendspark")
+    try:
+        sendspark.add_prospect(snapshot["firm"], email, "https://" + snapshot["domain"])
+        deadline = time.monotonic() + VIDEO_TIMEOUT_SECONDS
+        while True:
+            prospect = sendspark.get_prospect(email)
+            status = prospect.get("status") or "processing"
+            if status == sendspark.DONE and prospect.get("shareUrl"):
+                return save_video(job_id, prospect["shareUrl"], None)
+            if status == sendspark.FAILED:
+                return save_video(job_id, None, "Sendspark could not generate the video. Check the campaign in Sendspark.")
+            if time.monotonic() > deadline:
+                return save_video(job_id, None, "Sendspark was still rendering after 15 minutes. Check the campaign in Sendspark.")
+            file_progress(job_id, "video", f"Sendspark: {status}")
+            time.sleep(VIDEO_POLL_SECONDS)
+    except sendspark.SendsparkError as exc:
+        save_video(job_id, None, str(exc))
+
+
 def run_outputs(job_id: int):
     with database() as db:
         row = db.execute("SELECT * FROM output_jobs WHERE id=?", (job_id,)).fetchone()
@@ -120,14 +157,29 @@ def run_outputs(job_id: int):
         db.execute("UPDATE output_jobs SET status='running',stage='Starting' WHERE id=?", (job_id,))
         db.execute("UPDATE output_files SET status='running' WHERE job_id=?", (job_id,))
     error = None
+    documents = [format for format in job["formats"] if format != "video"]
     try:
-        generate_outputs(job_id, job)
+        if documents:
+            generate_outputs(job_id, {**job, "formats": documents})
     except Exception as exc:
         # This background-task boundary must leave a persisted terminal state.
         logging.error("Output job %s failed (%s).", job_id, type(exc).__name__)
         error = (str(exc) if isinstance(exc, (DeckError, ModelStreamError)) else
                  "OpenAI request timed out. Prepare a retry of this run." if isinstance(exc, openai.APITimeoutError) else
                  "Output build failed. Check provider access or retry this run.")
+    with database() as db:
+        # Settle the documents now; the video can take minutes longer.
+        db.execute("""UPDATE output_files SET status='failed',error=?
+                      WHERE job_id=? AND format!='video' AND status!='ready' AND status!='failed'""",
+                   (error or "No file returned for this format.", job_id))
+    if "video" in job["formats"]:
+        # The video has its own provider, so a document failure does not stop it.
+        try:
+            update_stage(job_id, "Rendering the personalised video in Sendspark")
+            generate_video(job_id, job)
+        except Exception:
+            logging.exception("Output job %s could not create the video.", job_id)
+            save_video(job_id, None, "Could not create the video. See the API log.")
     with database() as db:
         db.execute("""UPDATE output_files SET status='failed',error=?
                       WHERE job_id=? AND status!='ready' AND status!='failed'""",
@@ -157,8 +209,10 @@ def create_outputs(firm_id: int, body: OutputRequest, tasks: BackgroundTasks):
                               (body.approval_id, firm_id, SNAPSHOT_VERSION)).fetchone()
         if not approval:
             raise HTTPException(404, "Choose an approved brief belonging to this firm.")
-        if not os.getenv("OPENAI_API_KEY"):
+        if set(payload["formats"]) - {"video"} and not os.getenv("OPENAI_API_KEY"):
             raise HTTPException(503, "Output generation is not configured.")
+        if "video" in payload["formats"] and not sendspark.configured():
+            raise HTTPException(503, sendspark.NOT_CONFIGURED)
         logo = None
         if body.logo_id is not None:
             logo = db.execute("SELECT content,mime_type FROM brand_assets WHERE id=? AND firm_id=?",
@@ -183,7 +237,7 @@ def download_output(firm_id: int, job_id: int, file_id: int):
     with database() as db:
         row = db.execute("""SELECT f.format,f.content FROM output_files f
             JOIN output_jobs j ON j.id=f.job_id
-            WHERE f.id=? AND f.job_id=? AND j.firm_id=? AND f.status='ready'""",
+            WHERE f.id=? AND f.job_id=? AND j.firm_id=? AND f.status='ready' AND f.content IS NOT NULL""",
             (file_id, job_id, firm_id)).fetchone()
     if not row:
         raise HTTPException(404, "No completed file for this firm and run.")

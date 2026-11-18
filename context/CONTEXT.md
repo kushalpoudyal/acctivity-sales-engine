@@ -90,7 +90,10 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
   enrichment, simulated research + output). Fictional data, no API calls.
 - Landing page with a checklist (in-memory).
 
-**Not built yet:** Sendspark/videos, per-prospect images (outputs use the brand illustrations), Acctivity product content for proposals, live Acctivity demo environment, auth.
+**Personalised AI video (19/11, branch `sendspark-ai-video`):** optional output that sends the approved firm name to
+the Sendspark "Stalktivity" campaign and saves the video's share link. See `SENDSPARK.md` → Our setup.
+
+**Not built yet:** per-prospect images (outputs use the brand illustrations), Acctivity product content for proposals, live Acctivity demo environment, auth.
 
 ## Notes on the feed (Claude, 18/11, unverified until probed)
 

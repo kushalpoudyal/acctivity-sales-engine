@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 import apollo
 from apollo_findings import apollo_findings
 import openai
+import sendspark
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
 from decks import DeckError, validate_pptx
 from documents import render_pptx, write_copy
@@ -137,7 +138,7 @@ def initialize():
         for column, definition in [
             ("stage", "TEXT NOT NULL DEFAULT 'Queued'"), ("container_id", "TEXT"),
             ("started_at", "TEXT"), ("updated_at", "TEXT"), ("finished_at", "TEXT"),
-            ("preview", "TEXT NOT NULL DEFAULT ''"),
+            ("preview", "TEXT NOT NULL DEFAULT ''"), ("url", "TEXT"),
         ]:
             if column not in file_columns:
                 db.execute(f"ALTER TABLE output_files ADD COLUMN {column} {definition}")
@@ -222,12 +223,13 @@ def get_firm(firm_id: int):
             job["formats"] = json.loads(job["formats"])
             job["files"] = [dict(p) for p in db.execute(
                 """SELECT id,format,status,error,length(content) AS size,stage,started_at,updated_at,
-                   finished_at,preview FROM output_files WHERE job_id=?""",
+                   finished_at,preview,url FROM output_files WHERE job_id=?""",
                 (job["id"],))]
     return {**dict(row), "research_meta": json.loads(row["research_meta"]), "records": records,
             "brief_token": token, "pages_saved": pages_saved,
             "apollo_org": json.loads(row["apollo_org"]) if row["apollo_org"] else None,
             "apollo_configured": apollo.configured(), "apollo_contacts": contacts, "apollo_findings": extra,
+            "sendspark_configured": sendspark.configured(),
             "web_findings": web,
             "proposals": proposals, "brand_assets": assets, "outputs": outputs}
 
