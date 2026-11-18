@@ -1,0 +1,13 @@
+.prospects{max-width:1100px;margin:auto;padding:3rem 1.25rem;color:#203e38}
+.prospects h1,.prospects h2{font-family:Georgia,serif}.prospects h1{font-size:clamp(2rem,5vw,3.8rem)}
+.prospects header,.prospects p,.prospects h2{margin-bottom:1rem}
+.prospects form,.prospects section{padding:1.4rem;background:white;border:1px solid #d5dfd8;border-radius:12px}
+.prospects form{display:flex;align-items:end;gap:1rem;flex-wrap:wrap;margin-bottom:1rem}
+.prospects label,.firm-row span{display:block;font-size:.88rem}.prospects input{display:block;padding:.6rem;max-width:100%;border:1px solid #8da49a;border-radius:5px}
+.prospects button{padding:.65rem .9rem;background:#165952;border:0;border-radius:6px;color:white;cursor:pointer}
+.prospects button:disabled{opacity:.55;cursor:wait}.prospect-grid{display:grid;grid-template-columns:1fr 1.5fr;gap:1rem}
+.prospects .firm-row{display:block;text-align:left;width:100%;margin-top:.65rem;background:#edf3ee;color:#223d36}
+.prospects .firm-row[aria-pressed=true]{box-shadow:inset 4px 0 #165952}
+.prospects li{margin-bottom:.9rem;overflow-wrap:anywhere}.prospects li a{display:inline-block;margin-right:.65rem;color:#12534a;text-decoration:underline}
+.prospects [role=alert]{padding:.8rem;background:#fff0d4}
+@media(max-width:700px){.prospect-grid{grid-template-columns:1fr}}

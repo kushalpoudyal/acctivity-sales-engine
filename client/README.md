@@ -5,6 +5,10 @@ in-page navigation, and an interactive checklist with a progress indicator.
 Checklist state is kept in memory and resets when the page reloads.
 No backend or environment variables are required.
 
+The separate live `/prospects` directory requires FastAPI on `127.0.0.1:9001`.
+Vite proxies `/api/v1` to that server. Saving or viewing a firm is local;
+only **Run website research** starts a paid OpenAI request.
+
 Open `/sales-studio.html` on the dev server for a separate, clickable sales-engine
 mockup: browse firms, add one with optional Apollo enrichment, then simulate
 research and sandbox output generation. It uses fictional data, makes no API

@@ -1,5 +1,24 @@
 # FastAPI server
 
+## Live prospect directory
+
+With the API and Vite running, visit `http://127.0.0.1:5173/prospects`.
+`POST /api/v1/firms` saves a website and optional display name. `GET /api/v1/firms`
+lists firms; append `/{id}` to read the saved brief. `POST /api/v1/firms/{id}/research`
+with JSON `{}` starts a paid, site-restricted OpenAI web search; poll the firm detail
+until `status` is no longer `researching`. Uncited lines are not saved as findings.
+Use `OPENAI_RESEARCH_MODEL` to override the research model.
+
+Review the findings, deselect anything unsuitable, then approve. Approval saves a
+snapshot without a paid request. **Generate PowerPoint** builds from that snapshot
+in a private OpenAI Code Interpreter container and saves the validated `.pptx`
+in local SQLite before offering a download. A failed build can be retried without
+re-running research. Set `OPENAI_DECK_MODEL` to override the build model.
+
+This single-process local prototype uses the ignored `prospects.sqlite3` database
+next to the API. A restart marks interrupted searches failed, without automatic
+paid retries. Keep both dev servers on loopback; there is no user authentication yet.
+
 Run these PowerShell commands from this folder.
 
 ## Initial setup

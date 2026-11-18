@@ -1,16 +1,25 @@
 import os
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import openai
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from prospects import initialize, router
 
 load_dotenv(Path(__file__).with_name(".env"))
 
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 
-app = FastAPI(title="Hack A API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    initialize()
+    yield
+
+
+app = FastAPI(title="Hack A API", version="0.1.0", lifespan=lifespan)
+app.include_router(router)
 
 
 @app.get("/")

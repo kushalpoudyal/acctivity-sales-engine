@@ -29,6 +29,7 @@ function App() {
         </a>
         <nav aria-label="Main navigation">
           <a href="#features">The possibilities</a>
+          <a href="/prospects">Prospect directory</a>
           <a className="nav-cta" href="#playground">Try it out <span aria-hidden="true">&rarr;</span></a>
         </nav>
       </header>
