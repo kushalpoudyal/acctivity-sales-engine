@@ -95,6 +95,16 @@ the firm's Apollo organization (headcount, industries, tech stack) in `firms.apo
 enriching again requires `{"refresh": true}`. `apollo.py` is the client (no retries; the
 key is sent only to Apollo). Tests mock HTTP and never spend credits.
 
+Contacts: `GET /api/v1/firms/{id}/apollo/candidates?titles=Partner,CFO` (free) searches
+Apollo people at the firm by title, or by `seniorities=` if given. A title-only search that
+finds nobody is retried by seniority (owner, founder, c_suite, partner, head, director,
+manager); `search`/`fallback` in the response say which search produced the list.
+`POST /api/v1/firms/{id}/apollo/reveal {"ids": [...]}` spends **1 credit per matched person**
+(work email only, no phones), in batches of 10, and refuses ids already stored with an email.
+Revealed people merge into `staff` by name (case-insensitive): `source` is `website`,
+`apollo` or `both`; Apollo fills `apollo_email`, `email_status`, `linkedin_url`,
+`match_confidence`. Re-running research replaces only website-only staff rows.
+
 This single-process local prototype uses the ignored `prospects.sqlite3` database
 next to the API. A restart marks interrupted searches failed, without automatic
 paid retries. Keep both dev servers on loopback; there is no user authentication yet.

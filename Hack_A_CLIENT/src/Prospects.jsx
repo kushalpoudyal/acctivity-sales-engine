@@ -109,7 +109,9 @@ function FirmWorkspace({ detail, busy, dirty, mutate, onDirty }) {
   const apolloBusy = busy || dirty || detail.status === 'researching'
   const apollo = <>
     <ApolloPanel detail={detail} busy={apolloBusy} submit={submit} />
+    {detail.apollo_configured && <ApolloContacts detail={detail} busy={apolloBusy} submit={submit} />}
     {dirty && detail.apollo_configured && <p className="coverage">Save or discard research edits before using Apollo.</p>}
+    <StaffRecords detail={detail} />
   </>
   return <>
     <div className="workspace-heading"><div><small>FIRM WORKSPACE</small><h2>{detail.name}</h2><p>{detail.domain}</p></div>
@@ -296,4 +298,67 @@ function ApolloPanel({ detail, busy, submit }) {
       <p>Look up this firm's headcount, industries and technology in Apollo. Uses 1 Apollo credit.</p>
       <button disabled={busy} onClick={() => submit('apollo/enrich', {})}>Enrich firm (1 credit)</button>
     </>}</div>
+}
+
+const defaultTitles = 'Managing Partner, Partner, Practice Manager, General Manager, Operations Manager, Finance Manager, CFO'
+
+function ApolloContact({ person }) {
+  if (!person.apollo_id) return 'Not revealed'
+  return <>{person.apollo_email || 'No email found'}{person.email_status && ` (${person.email_status})`}
+    {person.linkedin_url && <> · <a href={person.linkedin_url} target="_blank" rel="noreferrer">LinkedIn ↗</a></>}
+    {person.match_confidence && <><br /><small>Match confidence: {person.match_confidence}</small></>}</>
+}
+
+function ApolloContacts({ detail, busy, submit }) {
+  const [titles, setTitles] = useState(defaultTitles)
+  const [seniorities, setSeniorities] = useState('')
+  const [result, setResult] = useState(null)
+  const [selected, setSelected] = useState([])
+  const [searching, setSearching] = useState(false)
+  const [error, setError] = useState('')
+  const revealed = new Set(detail.staff.filter(p => p.apollo_email).map(p => p.apollo_id))
+  const picks = selected.filter(i => !revealed.has(i))
+  async function find(event) {
+    event.preventDefault()
+    setSearching(true); setError('')
+    const params = new URLSearchParams()
+    if (titles.trim()) params.append('titles', titles)
+    if (seniorities.trim()) params.append('seniorities', seniorities)
+    try { setResult(await request(`/${detail.id}/apollo/candidates?${params}`)); setSelected([]) }
+    catch (e) { setError(e.message) } finally { setSearching(false) }
+  }
+  const searchNote = result && (result.fallback
+    ? `No one matched those titles, so this list comes from a seniority search (${result.seniorities.join(', ')}).`
+    : `Found by ${result.search === 'titles' ? 'title' : result.search === 'seniorities' ? 'seniority' : 'title and seniority'} search.`)
+  return <div className="apollo-panel"><h3>Apollo contacts</h3>
+    <form className="apollo-search" onSubmit={find}>
+      <label>Job titles (comma-separated)<input value={titles} onChange={e => setTitles(e.target.value)} /></label>
+      <label>Seniorities (optional, e.g. owner, director)<input value={seniorities} onChange={e => setSeniorities(e.target.value)} /></label>
+      <button disabled={searching}>{searching ? 'Searching…' : 'Find people (free)'}</button>
+    </form>
+    <p>Searching is free and shows only first names. If no titles match, Apollo is searched by seniority instead.</p>
+    {error && <p role="alert">{error}</p>}
+    {result && <>
+      <p>{searchNote} {result.candidates.length} of {result.total} shown.</p>
+      {result.candidates.length > 0 && <ul className="candidate-list">{result.candidates.map(c => {
+        const done = revealed.has(c.apollo_id)
+        return <li key={c.apollo_id}><label className="choice">
+          <input type="checkbox" disabled={done} checked={done || picks.includes(c.apollo_id)}
+            onChange={e => setSelected(e.target.checked ? [...picks, c.apollo_id] : picks.filter(i => i !== c.apollo_id))} />
+          <span><strong>{[c.first_name, c.last_name_obfuscated].filter(Boolean).join(' ') || 'Unnamed'}</strong> · {c.title || 'No title'}
+            {' · '}{done ? 'Email saved' : c.has_email ? 'Apollo has an email' : 'Email unlikely'}</span></label></li>
+      })}</ul>}
+      {result.candidates.length > 0 && <button disabled={busy || !picks.length} onClick={() => submit('apollo/reveal', { ids: picks })}>
+        Reveal {picks.length} {picks.length === 1 ? 'email' : 'emails'} ({picks.length} {picks.length === 1 ? 'credit' : 'credits'})</button>}
+    </>}</div>
+}
+
+function StaffRecords({ detail }) {
+  if (!detail.staff?.length) return null
+  return <div><div className="section-title"><h3>Staff records ({detail.staff.length})</h3>
+    <small>Website profiles and revealed Apollo contacts saved for demo preparation. These are not active Acctivity accounts.</small></div>
+    <div className="staff-table"><table><thead><tr><th>Name</th><th>Position</th><th>Public work contact</th><th>Apollo</th></tr></thead>
+      <tbody>{detail.staff.map(person => <tr key={person.id}><td>{person.full_name}</td><td>{person.position || 'Not published'}</td>
+        <td>{[person.public_work_email, person.public_work_phone].filter(Boolean).join(' · ') || 'Not published'}</td>
+        <td><ApolloContact person={person} /></td></tr>)}</tbody></table></div></div>
 }
