@@ -8,6 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import apollo
+from apollo_findings import apollo_findings
 import openai
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
 from decks import DeckError, generate_deck
@@ -22,7 +23,7 @@ DB_PATH = Path(__file__).with_name("prospects.sqlite3")
 # apollo_email holds the revealed work email apart from the website's public_work_email.
 STAFF_APOLLO_COLUMNS = [("source", "TEXT NOT NULL DEFAULT 'website'"), ("apollo_id", "TEXT"),
                         ("linkedin_url", "TEXT"), ("email_status", "TEXT"), ("match_confidence", "TEXT"),
-                        ("apollo_email", "TEXT")]
+                        ("apollo_email", "TEXT"), ("apollo_revealed_at", "TEXT")]
 
 
 @contextmanager
@@ -107,10 +108,11 @@ def get_firm(firm_id: int):
         raise HTTPException(404, "Firm not found.")
     values = dict(row)
     values.pop("research_pages")
+    org = json.loads(row["apollo_org"]) if row["apollo_org"] else None
+    extra = apollo_findings(org, row["apollo_enriched_at"], staff)
     return {**values, "research_meta": json.loads(row["research_meta"]),
-            "apollo_org": json.loads(row["apollo_org"]) if row["apollo_org"] else None,
-            "apollo_configured": apollo.configured(),
-            "brief": json.loads(row["brief"]), "brief_token": digest(row["brief"]),
+            "apollo_org": org, "apollo_configured": apollo.configured(), "apollo_findings": extra,
+            "brief": json.loads(row["brief"]), "brief_token": review_token(row["brief"], extra),
             "proposals": proposals, "staff": staff, "brand_assets": assets}
 
 
@@ -163,8 +165,13 @@ def demo_export(firm_id: int, proposal_id: int):
     people = {}
     for finding in snapshot["findings"]:
         if finding.get("person"):
-            people[finding["person"]["full_name"].casefold()] = {
-                **finding["person"], "sources": finding["sources"]}
+            # An approved website profile and an approved Apollo contact for the same name merge into one
+            # person; Apollo values (apollo_email, linkedin_url) appear only when their finding was approved.
+            key = finding["person"]["full_name"].casefold()
+            person = people.get(key, {"sources": []})
+            person.update({k: v for k, v in finding["person"].items() if v is not None or k not in person})
+            person["sources"] = person.pop("sources") + finding["sources"]
+            people[key] = person
     payload = {"schema_version": 1, "mode": "demo_staging", "send_invitations": False,
                "firm": {"name": snapshot["firm"], "website": "https://" + snapshot["domain"]},
                "staff": list(people.values()), "findings": snapshot["findings"],
@@ -178,9 +185,16 @@ def digest(text: str):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
+def review_token(brief: str, extra: list[dict]):
+    """Changes whenever the reviewable findings change. Without Apollo findings it is the brief digest,
+    as before Apollo existed."""
+    return digest(brief + json.dumps(extra, sort_keys=True)) if extra else digest(brief)
+
+
 class Approval(BaseModel):
     brief_token: str
-    findings: list[int] = Field(min_length=1)
+    findings: list[int] = Field(default_factory=list)
+    apollo_findings: list[str] = Field(default_factory=list, max_length=1000)
 
 
 @router.post("/{firm_id}/approvals")
@@ -190,14 +204,23 @@ def approve(firm_id: int, body: Approval):
         firm = db.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
         if not firm:
             raise HTTPException(404, "Firm not found.")
-        if digest(firm["brief"]) != body.brief_token or firm["status"] == "researching":
+        staff = [dict(p) for p in db.execute("SELECT * FROM staff WHERE firm_id=? ORDER BY full_name", (firm_id,))]
+        extra = apollo_findings(json.loads(firm["apollo_org"]) if firm["apollo_org"] else None,
+                                firm["apollo_enriched_at"], staff)
+        if review_token(firm["brief"], extra) != body.brief_token or firm["status"] == "researching":
             raise HTTPException(409, "Research changed or is running. Refresh and review the findings again.")
         findings = json.loads(firm["brief"])
         indices = sorted(set(body.findings))
-        if min(indices) < 0 or max(indices) >= len(findings):
+        keys = set(body.apollo_findings)
+        if not indices and not keys:
+            raise HTTPException(422, "Select at least one finding.")
+        if indices and (min(indices) < 0 or max(indices) >= len(findings)):
             raise HTTPException(422, "Select findings from the current brief.")
+        if keys - {item["key"] for item in extra}:
+            raise HTTPException(422, "Select Apollo findings from the current review.")
         snapshot = json.dumps({"firm": firm["name"], "domain": firm["domain"],
-                               "findings": [findings[i] for i in indices]})
+                               "findings": [findings[i] for i in indices]
+                               + [item for item in extra if item["key"] in keys]})
         token = digest(snapshot)
         db.execute("INSERT OR IGNORE INTO proposals(firm_id,digest,snapshot) VALUES(?,?,?)",
                    (firm_id, token, snapshot))
@@ -332,13 +355,14 @@ def merge_apollo_person(db, firm_id: int, match: dict):
                      match.get("match_confidence"))
     if row := staff_row(db, firm_id, name, match["id"]):
         db.execute("""UPDATE staff SET apollo_id=?, linkedin_url=?, apollo_email=?, email_status=?,
-                      match_confidence=?, position=COALESCE(position,?), source=? WHERE id=?""",
+                      match_confidence=?, apollo_revealed_at=CURRENT_TIMESTAMP, position=COALESCE(position,?),
+                      source=? WHERE id=?""",
                    (*apollo_fields, match.get("title"), "apollo" if row["source"] == "apollo" else "both",
                     row["id"]))
     else:
         db.execute("""INSERT INTO staff(firm_id,full_name,position,profile,source_url,evidence,source,
-                      apollo_id,linkedin_url,apollo_email,email_status,match_confidence)
-                      VALUES(?,?,?,'{}',?,'','apollo',?,?,?,?,?)""",
+                      apollo_id,linkedin_url,apollo_email,email_status,match_confidence,apollo_revealed_at)
+                      VALUES(?,?,?,'{}',?,'','apollo',?,?,?,?,?,CURRENT_TIMESTAMP)""",
                    (firm_id, name, match.get("title"), match.get("linkedin_url") or "", *apollo_fields))
 
 

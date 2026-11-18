@@ -91,7 +91,7 @@ export default function Prospects() {
         {detail.brand_assets.map(asset => <figure key={asset.id}><img className="firm-logo" alt={`${detail.name} published logo`}
           src={`${base}/${id}/brand-assets/${asset.id}`} /><figcaption><a href={`${base}/${id}/brand-assets/${asset.id}`} download>Download logo</a>
           {' · '}<a href={asset.source_url} target="_blank" rel="noreferrer">Website source</a></figcaption></figure>)}</div>}
-      {detail.brief.length > 0 && <BriefReview key={`${id}:${detail.brief_token}`} detail={detail} busy={busy} submit={submit} />}
+      {(detail.brief.length > 0 || detail.apollo_findings?.length > 0) && <BriefReview key={`${id}:${detail.brief_token}`} detail={detail} busy={busy} submit={submit} />}
       {detail.proposals?.map(p => <div key={p.id}><h3>Approved brief #{p.id}</h3>
         <p><a href={`${base}/${id}/proposals/${p.id}/demo-export`}>Download approved firm and staff data (JSON)</a></p>
         {p.status === 'ready' ? <a href={`${base}/${id}/proposals/${p.id}/download`}>Download PowerPoint (.pptx)</a> :
@@ -177,8 +177,10 @@ function ApolloContacts({ detail, busy, submit }) {
 
 function BriefReview({ detail, busy, submit }) {
   const [selected, setSelected] = useState(detail.brief.map((_, i) => i))
+  const [apolloSelected, setApolloSelected] = useState((detail.apollo_findings || []).map(item => item.key))
   const categories = [...new Set(detail.brief.map(item => item.category || 'Website findings'))]
-  return <><h3>Review cited findings</h3><small>{detail.researched_at} UTC · Uncheck anything you do not want in the proposal.</small>
+  const count = selected.length + apolloSelected.length
+  return <><h3>Review findings</h3><small>{detail.researched_at ? `${detail.researched_at} UTC · ` : ''}Uncheck anything you do not want in the proposal, demo export or deck.</small>
     {categories.map(category => <div key={category}><h3>{category}</h3>
       <ul className="finding-list">{detail.brief.map((item, i) => (item.category || 'Website findings') === category && <li key={i}>
         <label className="finding-choice"><input type="checkbox" checked={selected.includes(i)}
@@ -187,5 +189,30 @@ function BriefReview({ detail, busy, submit }) {
         <div>{item.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div>
         {item.evidence && <details><summary>Supporting website passage</summary><blockquote>{item.evidence}</blockquote></details>}
       </li>)}</ul></div>)}
-    <button disabled={busy || !selected.length || detail.status === 'researching'} onClick={() => submit('approvals', { brief_token: detail.brief_token, findings: selected })}>Approve selected findings</button></>
+    <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />
+    <button disabled={busy || !count || detail.status === 'researching'} onClick={() => submit('approvals', { brief_token: detail.brief_token, findings: selected, apollo_findings: apolloSelected })}>
+      Approve {count} selected {count === 1 ? 'finding' : 'findings'}</button></>
+}
+
+// Apollo findings: no website passage; each shows "Source: Apollo, retrieved <date>". Long lists (tech stack,
+// keywords) render as compact checkboxes with a per-group Select all / Clear all.
+function ApolloReview({ items, selected, setSelected }) {
+  const categories = [...new Set(items.map(item => item.category))]
+  return categories.map(category => {
+    const group = items.filter(item => item.category === category)
+    const keys = group.map(item => item.key)
+    const chosen = keys.filter(k => selected.includes(k)).length
+    const contacts = category === 'Apollo: contacts'
+    return <div key={category}><h3>{category} <small>({chosen} of {group.length} selected)</small></h3>
+      <p><small>{group[0].sources[0].title}. From Apollo's database, not the firm's website.
+        {category === 'Apollo: tech stack' && ' Apollo mostly reports web and IT tools (CDN, analytics, Microsoft 365), not practice-management software. Untick anything that looks wrong.'}</small>
+        {' '}<button type="button" onClick={() => setSelected(chosen < group.length ? [...new Set([...selected, ...keys])] : selected.filter(k => !keys.includes(k)))}>
+          {chosen < group.length ? 'Select all' : 'Clear all'}</button></p>
+      <ul className={contacts ? 'finding-list' : 'finding-list apollo-compact'}>{group.map(item => <li key={item.key}>
+        <label className="finding-choice"><input type="checkbox" checked={selected.includes(item.key)}
+          onChange={e => setSelected(e.target.checked ? [...selected, item.key] : selected.filter(k => k !== item.key))} />
+          <span title={contacts ? undefined : item.text}>{contacts ? <><strong>{item.title}<br /></strong>{item.text}</> : item.title}</span></label>
+        {contacts && item.person?.linkedin_url && <div><a href={item.person.linkedin_url} target="_blank" rel="noreferrer">LinkedIn ↗</a></div>}
+      </li>)}</ul></div>
+  })
 }

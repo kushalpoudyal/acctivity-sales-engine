@@ -25,4 +25,5 @@
 .prospects .apollo-panel dt{font-weight:600}.prospects .apollo-panel dd{margin:0;overflow-wrap:anywhere}
 .prospects .apollo-search{display:grid;gap:.5rem;margin:0 0 .5rem;padding:0;background:none}
 .prospects .candidate-list{list-style:none;padding:0;margin:0 0 1rem}
+.prospects .apollo-compact{display:flex;flex-wrap:wrap;gap:.4rem}.prospects .apollo-compact li{margin:0;padding:.35rem .65rem}
 @media(max-width:700px){.prospect-grid{grid-template-columns:1fr}}
