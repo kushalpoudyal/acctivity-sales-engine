@@ -7,6 +7,7 @@ import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from prospects import initialize, router
+from outputs import router as outputs_router
 
 load_dotenv(Path(__file__).with_name(".env"))
 
@@ -20,6 +21,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Hack A API", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
+app.include_router(outputs_router)
 
 
 @app.get("/")
