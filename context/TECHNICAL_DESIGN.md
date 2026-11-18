@@ -9,17 +9,23 @@ The original design below is retained as a proposal; the current prototype diffe
 - The working Research and Create outputs tabs live at `/prospects?firm={id}`.
 - Storage is local SQLite, selected for the prototype, rather than PostgreSQL.
 - Research now uses a bounded first-party crawler followed by structured OpenAI
-  extraction, rather than relying on web-search summaries. Staff records,
-  supporting passages and permitted same-domain logo images are saved.
+  extraction, rather than relying on web-search summaries. Results are normalised
+  into `pages`, `practice_areas`, `people` (+ `person_practice_areas`), `offices`
+  and `facts` tables; every record cites its page and a verified verbatim passage.
+  Permitted same-domain logo images are saved. Saved pages can be re-extracted
+  without crawling again.
 - `PUT /api/v1/firms/{id}/brief` saves rep edits with a concurrency token.
-  `POST /api/v1/firms/{id}/approvals` freezes selected findings.
+  `POST /api/v1/firms/{id}/approvals` freezes the selected records.
 - `POST /api/v1/firms/{id}/outputs` accepts an approval, selected `pptx`/`docx`/`pdf`
   formats, optional saved logo, instructions and an idempotent `request_key`.
   Firm detail returns output-job progress and per-file download routes.
-- One explicit container generates the selected files; validated downloads are
-  persisted in SQLite before container deletion. Partial results remain available.
-- The default model is `gpt-6.1-sol`. A live test generated all three formats;
-  16 focused tests and the client lint/production build passed.
+- One paid OpenAI call writes short copy from the approved records; our own brand
+  templates (`documents.py`, rules in `Hack_A_API/api/brand/BRAND.md`) build each
+  file. This replaced the Code Interpreter container below so that branding is
+  enforced in code. Validated downloads are persisted in SQLite; a failing format
+  does not lose the others.
+- The default model is `gpt-6.1-sol`. A live CBD Law run generated all three
+  formats; 24 focused tests and the client lint/production build passed.
 - Apollo, CRM, live tenant provisioning, authentication and a resumable external
   worker remain unimplemented. Keep this prototype on loopback.
 
@@ -71,6 +77,8 @@ Use OpenAI `POST /v1/responses` with the hosted `web_search` tool. Example reque
 **Optional Apollo branch:** when off, make zero Apollo calls. When on, enrich the organisation by domain and search for roles; only look up a work email after the rep selects a person and confirms. Store Apollo provenance separately. If unavailable, return a source warning and keep the website brief. No mobile lookup, email sending or CRM write is part of research. See [Apollo endpoints and access uncertainties](./APOLLO.md).
 
 ## Build worker: OpenAI containers
+
+*Superseded in the prototype by template rendering (see the status above); kept for reference.*
 
 | Stage | Provider operation | Completion check |
 |---|---|---|

@@ -7,6 +7,7 @@
 .prospects label{display:block;font-size:.88rem}.prospects input:not([type=checkbox]):not([type=radio]),.prospects textarea,.prospects select{display:block;width:100%;margin:.35rem 0 .85rem;padding:.65rem;max-width:100%;border:1px solid #8da49a;border-radius:6px;color:#203e38;background:white;font:inherit}
 .prospects textarea{resize:vertical;line-height:1.6}.prospects select{font:inherit}
 .prospects button{padding:.7rem 1rem;background:#165952;border:0;border-radius:7px;color:white;cursor:pointer;font:inherit}
+.prospects button.secondary{background:#edf3ee;color:#204b40}.prospects .toolbar-actions{display:flex;gap:.6rem;flex-wrap:wrap}
 .prospects button:disabled{opacity:.5;cursor:not-allowed}.prospects .prospect-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:1.25rem;align-items:start}
 .prospects .directory,.prospects .workspace{padding:1.4rem;background:white;border:1px solid #d5dfd8;border-radius:12px;min-width:0}
 .prospects .directory{position:sticky;top:1rem}.prospects .directory h2{margin-bottom:1rem}

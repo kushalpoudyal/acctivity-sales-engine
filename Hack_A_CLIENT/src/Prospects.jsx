@@ -15,7 +15,7 @@ async function request(path = '', options) {
     const message = Array.isArray(result.detail) ? result.detail.map(e => e.msg).join('; ') : result.detail
     throw new Error(typeof message === 'string' ? message : `Request failed (${res.status}).`)
   }
-  if (/^\/\d+$/.test(path) && (!Array.isArray(result.outputs) ||
+  if (/^\/\d+$/.test(path) && (!Array.isArray(result.outputs) || !result.records ||
       !Array.isArray(result.proposals) || result.proposals.some(p => !p.snapshot))) {
     throw new Error('The API is running an older workspace version. Restart FastAPI on port 9001, then refresh.')
   }
@@ -98,8 +98,8 @@ export default function Prospects() {
 function FirmWorkspace({ detail, busy, mutate, onDirty }) {
   const [tab, setTab] = useState('research')
   const [approvalId, setApprovalId] = useState(null)
-  async function approve(indices) {
-    const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, findings: indices })
+  async function approve(selection) {
+    const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, ...selection })
     if (result) { setApprovalId(result.id); setTab('outputs') }
   }
   return <>
@@ -118,43 +118,77 @@ function FirmWorkspace({ detail, busy, mutate, onDirty }) {
   </>
 }
 
+const recordKinds = [['practice_areas', 'Practice areas'], ['people', 'People'], ['offices', 'Offices'], ['facts', 'Firm facts']]
+const factKinds = { overview: 'Overview', history: 'History', credential: 'Credential', clients: 'Clients', approach: 'Approach' }
+// Editable fields per record kind: [key, label, 'line' | 'long' | 'list', required]
+const recordFields = {
+  facts: [['title', 'Title', 'line', true], ['detail', 'Detail', 'long', true]],
+  practice_areas: [['name', 'Practice area', 'line', true], ['description', 'What they handle', 'long', true], ['services', 'Services (one per line)', 'list']],
+  people: [['full_name', 'Full name', 'line', true], ['position', 'Position', 'line'], ['public_work_email', 'Public work email', 'line'],
+    ['public_work_phone', 'Public work phone', 'line'], ['biography', 'Biography', 'long'], ['qualifications', 'Qualifications (one per line)', 'list']],
+  offices: [['name', 'Office', 'line', true], ['address', 'Address', 'line'], ['phone', 'Phone', 'line'], ['email', 'Email', 'line']],
+}
+const allIds = records => Object.fromEntries(recordKinds.map(([kind]) => [kind, records[kind].map(r => r.id)]))
+const countRecords = records => recordKinds.reduce((n, [kind]) => n + records[kind].length, 0)
+function recordLabel(kind, r) {
+  if (kind === 'people') return `${r.full_name} · ${r.position || 'Position not published'}`
+  return kind === 'facts' ? `${factKinds[r.kind]}: ${r.title}` : r.name
+}
+function recordSummary(kind, r, areas) {
+  if (kind === 'facts') return r.detail
+  if (kind === 'practice_areas') return r.description
+  if (kind === 'offices') return [r.address, r.phone, r.email].filter(Boolean).join(' · ')
+  return areas.filter(a => r.practice_area_ids.includes(a.id)).map(a => a.name).join(' · ')
+}
+
+function RecordField({ value, label, type, required, disabled, onChange }) {
+  if (type === 'list') return <label>{label}<textarea rows={2} value={value.join('\n')} disabled={disabled} onChange={e => onChange(e.target.value.split('\n'))} /></label>
+  const props = { required, disabled, value: value || '', onChange: e => onChange(e.target.value || null) }
+  return <label>{label}{type === 'long' ? <textarea rows={3} maxLength={12000} {...props} /> : <input maxLength={320} {...props} />}</label>
+}
+
 function ResearchEditor({ detail, busy, mutate, approve, onDirty }) {
   const [name, setName] = useState(detail.name)
   const [logoId, setLogoId] = useState(detail.preferred_logo_id ?? '')
-  const [findings, setFindings] = useState(detail.brief)
-  const [selected, setSelected] = useState(detail.brief.map((_, i) => i))
+  const [records, setRecords] = useState(detail.records)
+  const [selected, setSelected] = useState(() => allIds(detail.records))
   const [notice, setNotice] = useState('')
   const dirty = name !== detail.name || String(logoId) !== String(detail.preferred_logo_id ?? '') ||
-    JSON.stringify(findings) !== JSON.stringify(detail.brief)
+    JSON.stringify(records) !== JSON.stringify(detail.records)
   const locked = busy || detail.status === 'researching'
+  const total = countRecords(detail.records)
   useEffect(() => { onDirty(dirty) }, [dirty, onDirty])
   useEffect(() => {
     function warn(e) { if (dirty) { e.preventDefault(); e.returnValue = '' } }
     window.addEventListener('beforeunload', warn)
     return () => window.removeEventListener('beforeunload', warn)
   }, [dirty])
-  function edit(index, patch) {
-    setFindings(previous => previous.map((f, i) => i === index ? { ...f, ...patch } : f))
+  function edit(kind, id, patch) {
+    setRecords(previous => ({ ...previous, [kind]: previous[kind].map(r => r.id === id ? { ...r, ...patch } : r) }))
     setNotice('')
+  }
+  function toggle(kind, id, on) {
+    setSelected(previous => ({ ...previous, [kind]: on ? [...previous[kind], id] : previous[kind].filter(n => n !== id) }))
   }
   async function save(event) {
     event.preventDefault()
-    await mutate(`/${detail.id}/brief`, {
-      brief_token: detail.brief_token, display_name: name, logo_id: logoId === '' ? null : Number(logoId),
-      findings: findings.map((f, index) => ({ index, title: f.title || '', text: f.text, person: f.person || null })),
-    }, 'PUT')
+    await mutate(`/${detail.id}/brief`, { brief_token: detail.brief_token, display_name: name, logo_id: logoId === '' ? null : Number(logoId), ...records }, 'PUT')
   }
-  async function runResearch() {
-    if (detail.brief.length && !window.confirm('Re-read the website? This paid run replaces current research and staff records. Approved briefs stay unchanged.')) return
-    const result = await mutate(`/${detail.id}/research`, {})
-    if (result) setNotice('Research started. Page coverage and results will update here.')
+  async function runResearch(reusePages) {
+    const message = reusePages
+      ? `Re-extract from the ${detail.pages_saved} saved pages? This paid run replaces current records without re-reading the website. Approved briefs stay unchanged.`
+      : 'Re-read the website? This paid run replaces current research records. Approved briefs stay unchanged.'
+    if (total && !window.confirm(message)) return
+    const result = await mutate(`/${detail.id}/research`, { reuse_pages: reusePages })
+    if (result) setNotice(reusePages ? 'Re-extraction started. Records will update here.' : 'Research started. Page coverage and results will update here.')
   }
-  const categories = [...new Set(findings.map(f => f.category || 'Website findings'))]
   return <>
     <div className="research-toolbar"><div><h3>Website research</h3><p>Read public team profiles, services and contact pages. Each run may incur charges.</p></div>
-      <button type="button" disabled={locked || dirty} onClick={runResearch}>{detail.status === 'researching' ? 'Researching…' : 'Run website research'}</button></div>
+      <div className="toolbar-actions">
+        {detail.pages_saved > 0 && <button type="button" className="secondary" disabled={locked || dirty} onClick={() => runResearch(true)}>Re-extract from {detail.pages_saved} saved pages</button>}
+        <button type="button" disabled={locked || dirty} onClick={() => runResearch(false)}>{detail.status === 'researching' ? 'Researching…' : 'Run website research'}</button></div></div>
     {notice && <p role="status">{notice}</p>}
-    {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${detail.brief.length} findings · ${detail.staff.length} staff records`}</p>}
+    {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${total} records · ${detail.records.people.length} people`}</p>}
     {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
     {detail.error && <p role="alert">{detail.error}</p>}
     <form className="research-form" onSubmit={save}>
@@ -166,36 +200,34 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty }) {
         <img className="firm-logo" alt={`Saved firm logo ${asset.id}`} src={`${base}/${detail.id}/brand-assets/${asset.id}`} />
         <a href={`${base}/${detail.id}/brand-assets/${asset.id}`} download>Download logo</a></label>)}</div>
       {!detail.brand_assets.length && <p>No logo saved. Research will try to collect a published website logo.</p>}
-      <div className="section-title"><h3>Review and edit findings</h3><small>Sources remain unchanged. Your corrections are labelled as rep edits.</small></div>
-      {!findings.length && <p>Run website research to populate the brief and staff records.</p>}
-      {categories.map(category => <div key={category}><h3 className="category-heading">{category}</h3>
-        <div className="finding-list">{findings.map((item, index) => (item.category || 'Website findings') === category &&
-          <article className="finding-card" key={index}>
-            <label className="choice"><input type="checkbox" checked={selected.includes(index)} disabled={locked}
-              onChange={e => setSelected(e.target.checked ? [...selected, index] : selected.filter(n => n !== index))} />
-              <strong>Include {item.title || `finding ${index + 1}`}</strong></label>
-            <label>Finding title<input value={item.title || ''} maxLength={200} disabled={locked} onChange={e => edit(index, { title: e.target.value })} /></label>
-            <label>Summary for sales material<textarea required rows={3} maxLength={12000} value={item.text} disabled={locked} onChange={e => edit(index, { text: e.target.value })} /></label>
-            {item.person && <details className="staff-editor"><summary>Edit staff profile: {item.person.full_name} · {item.person.position || 'Position not published'}</summary>
-              <p>Structured staff fields take precedence in outputs. Update the summary too if your correction changes it.</p>
-              <div className="field-grid">{[['full_name', 'Full name'], ['position', 'Position'], ['public_work_email', 'Public work email'], ['public_work_phone', 'Public work phone']].map(([key, label]) =>
-                <label key={key}>{label}<input required={key === 'full_name'} maxLength={320} value={item.person[key] || ''} disabled={locked}
-                  onChange={e => edit(index, { person: { ...item.person, [key]: e.target.value || null } })} /></label>)}</div>
-              <label>Biography<textarea rows={3} maxLength={8000} value={item.person.biography || ''} disabled={locked}
-                onChange={e => edit(index, { person: { ...item.person, biography: e.target.value || null } })} /></label>
-              {['practice_areas', 'qualifications'].map(key => <label key={key}>{key === 'practice_areas' ? 'Practice areas' : 'Qualifications'} (one per line)
-                <textarea rows={2} value={item.person[key].join('\n')} disabled={locked}
-                  onChange={e => edit(index, { person: { ...item.person, [key]: e.target.value.split('\n') } })} /></label>)}
-            </details>}
-            {item.rep_edited && <span className="badge">Rep edited · sources describe the original website record</span>}
-            <div className="source-links">{item.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title || 'Website source'} ↗</a>)}</div>
-            {item.evidence && <details><summary>Original supporting passage</summary><blockquote>{item.evidence}</blockquote></details>}
-          </article>)}</div></div>)}
+      <div className="section-title"><h3>Review and edit research records</h3><small>Each record keeps its source page. Your corrections are labelled as rep edits.</small></div>
+      {!total && <p>Run website research to populate the firm's practice areas, people, offices and facts.</p>}
+      {total > 0 && recordKinds.map(([kind, title]) => <div key={kind}><h3 className="category-heading">{title} <span className="badge">{records[kind].length}</span></h3>
+        {!records[kind].length && <p className="muted">None found on the website.</p>}
+        <div className="finding-list">{records[kind].map(record => <article className="finding-card" key={record.id}>
+          <label className="choice"><input type="checkbox" checked={selected[kind].includes(record.id)} disabled={locked}
+            onChange={e => toggle(kind, record.id, e.target.checked)} /><strong>Include {recordLabel(kind, record)}</strong></label>
+          <p className="muted">{recordSummary(kind, record, records.practice_areas)}</p>
+          <details className="staff-editor"><summary>Edit</summary>
+            {kind === 'facts' && <label>Type<select value={record.kind} disabled={locked} onChange={e => edit(kind, record.id, { kind: e.target.value })}>
+              {Object.entries(factKinds).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>}
+            <div className="field-grid">{recordFields[kind].filter(([, , type]) => type === 'line').map(([key, label, type, required]) =>
+              <RecordField key={key} label={label} type={type} required={required} value={record[key]} disabled={locked} onChange={value => edit(kind, record.id, { [key]: value })} />)}</div>
+            {recordFields[kind].filter(([, , type]) => type !== 'line').map(([key, label, type, required]) =>
+              <RecordField key={key} label={label} type={type} required={required} value={record[key]} disabled={locked} onChange={value => edit(kind, record.id, { [key]: value })} />)}
+            {kind === 'people' && records.practice_areas.length > 0 && <fieldset><legend>Practice areas</legend>{records.practice_areas.map(area =>
+              <label className="choice" key={area.id}><input type="checkbox" checked={record.practice_area_ids.includes(area.id)} disabled={locked}
+                onChange={e => edit(kind, record.id, { practice_area_ids: e.target.checked ? [...record.practice_area_ids, area.id].sort((a, b) => a - b) : record.practice_area_ids.filter(n => n !== area.id) })} />{area.name}</label>)}</fieldset>}
+          </details>
+          {record.original && <span className="badge">Rep edited · the source shows the original website record</span>}
+          <div className="source-links"><a href={record.source.url} target="_blank" rel="noreferrer">{record.source.title || 'Website source'} ↗</a></div>
+          <details><summary>Original supporting passage</summary><blockquote>{record.evidence}</blockquote></details>
+        </article>)}</div></div>)}
       <div className="review-actions"><button disabled={locked || !dirty}>Save research edits</button>
         <span role="status">{dirty ? 'Unsaved edits — save before approving or re-running research.' : 'All edits saved.'}</span></div>
     </form>
-    <div className="approval-bar"><div><strong>{selected.length} findings selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
-      <button disabled={locked || dirty || !selected.length} onClick={() => approve(selected)}>Approve &amp; create outputs →</button></div>
+    <div className="approval-bar"><div><strong>{countRecords(selected)} records selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
+      <button disabled={locked || dirty || !countRecords(selected)} onClick={() => approve(selected)}>Approve &amp; create outputs →</button></div>
   </>
 }
 
@@ -208,8 +240,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
   const logo = logoOverride ?? detail.preferred_logo_id ?? ''
   const selectedId = approvalId ?? detail.proposals[0]?.id ?? ''
   const approval = detail.proposals.find(p => p.id === Number(selectedId))
-  const olderApproval = approval && (approval.snapshot.firm !== detail.name ||
-    approval.snapshot.findings.some(f => !detail.brief.some(current => JSON.stringify(current) === JSON.stringify(f))))
+  const olderApproval = approval && approval.snapshot.brief_token !== detail.brief_token
   const running = detail.outputs.some(job => ['queued', 'running'].includes(job.status))
   async function generate(event) {
     event.preventDefault()
@@ -229,18 +260,19 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     setNotice('Failed formats selected for a new run. Check the branding and instructions, then generate.')
   }
   return <>
-    <h3>Create a sales pack</h3><p>OpenAI creates files inside its sandbox container. Validated downloads are saved here before the container is deleted.</p>
-    {!detail.proposals.length ? <div className="empty-state">No approved brief yet. Review findings in Research, then choose “Approve &amp; create outputs”.</div> :
+    <h3>Create a sales pack</h3><p>OpenAI writes the copy from the approved records. Acctivity brand templates build each file, and validated downloads are saved here.</p>
+    {!detail.proposals.length ? <div className="empty-state">No approved brief yet. Review the records in Research, then choose “Approve &amp; create outputs”.</div> :
       <form className="output-form" onSubmit={generate}>
         <label>Approved brief<select value={selectedId} disabled={busy} onChange={e => onApproval(Number(e.target.value))}>
-          {detail.proposals.map(p => <option key={p.id} value={p.id}>Brief #{p.id} · {p.snapshot.firm} · {p.snapshot.findings.length} findings</option>)}</select></label>
-        {olderApproval && <p className="coverage">This approval predates the current research or edits. To include the updated staff and findings, approve them in Research first.</p>}
-        {approval && <details><summary>Preview the approved data ({approval.snapshot.findings.length} findings)</summary>
+          {detail.proposals.map(p => <option key={p.id} value={p.id}>Brief #{p.id} · {p.snapshot.firm} · {countRecords(p.snapshot)} records</option>)}</select></label>
+        {olderApproval && <p className="coverage">This approval predates the current research or edits. To include the updated records, approve them in Research first.</p>}
+        {approval && <details><summary>Preview the approved data ({countRecords(approval.snapshot)} records)</summary>
           <p>Frozen snapshot for {approval.snapshot.firm}. Research edits do not change this approval.</p>
-          <ul>{approval.snapshot.findings.map((f, i) => <li key={i}>{f.title && <strong>{f.title}: </strong>}{f.text}</li>)}</ul>
+          {recordKinds.map(([kind, title]) => approval.snapshot[kind].length > 0 && <div key={kind}><strong>{title}</strong>
+            <ul>{approval.snapshot[kind].map(r => <li key={r.id}>{recordLabel(kind, r)}</li>)}</ul></div>)}
           <a href={`${base}/${detail.id}/proposals/${approval.id}/demo-export`}>Download approved firm and staff JSON</a>
         </details>}
-        <fieldset><legend>What should the container create?</legend>{Object.entries(formatLabels).map(([format, label]) =>
+        <fieldset><legend>What should we create?</legend>{Object.entries(formatLabels).map(([format, label]) =>
           <label className="format-option" key={format}><input type="checkbox" checked={formats.includes(format)} disabled={busy}
             onChange={e => setFormats(e.target.checked ? [...formats, format] : formats.filter(f => f !== format))} />
             <span><strong>{label}</strong><small>.{format} · {format === 'pdf' ? 'Prospective demo welcome guide' : 'Editable sales material'}</small></span></label>)}</fieldset>
@@ -248,8 +280,8 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
           <option value="">No firm logo</option>{detail.brand_assets.map(asset => <option key={asset.id} value={asset.id}>Saved firm logo #{asset.id}</option>)}</select></label>
         <label>Sales instructions<textarea maxLength={6000} rows={5} value={instructions} disabled={busy} onChange={e => setInstructions(e.target.value)}
           placeholder="Who is the audience? What should we demonstrate? e.g. Prepare a partner-level discussion focused on family law and a proposed pilot. Do not invent pricing." /></label>
-        <p className="muted">This sends the selected approved brief and optional logo to OpenAI. Each generation uses paid API and container resources. No emails or invitations are sent.</p>
-        <button disabled={busy || running || !formats.length || !approval}>{running ? 'Container run in progress…' : 'Generate selected outputs'}</button>
+        <p className="muted">This sends the approved records to OpenAI to write the copy; the logo stays with our templates. Each generation makes one paid API call. No emails or invitations are sent.</p>
+        <button disabled={busy || running || !formats.length || !approval}>{running ? 'Generation in progress…' : 'Generate selected outputs'}</button>
       </form>}
     {notice && <p role="status">{notice}</p>}
     <div className="section-title"><h3>Output runs &amp; downloads</h3><small>Progress is tracked per file. Successful downloads remain available even if another format fails.</small></div>
