@@ -90,18 +90,25 @@ export default function Prospects() {
         <strong>{f.name}</strong><span>{f.domain}</span><small>{labels[f.status]}</small></button>)}
       {!matches.length && <p>{firms.length ? 'No matching firms.' : 'No firms saved yet.'}</p>}</aside>
     <section className="workspace">{detail && detail.id === id
-      ? <FirmWorkspace key={id} detail={detail} busy={busy} mutate={mutate} onDirty={setDirty} />
+      ? <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} />
       : <><h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></>}</section></div>
   </main>
 }
 
-function FirmWorkspace({ detail, busy, mutate, onDirty }) {
+function FirmWorkspace({ detail, busy, dirty, mutate, onDirty }) {
   const [tab, setTab] = useState('research')
   const [approvalId, setApprovalId] = useState(null)
   async function approve(indices) {
     const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, findings: indices })
     if (result) { setApprovalId(result.id); setTab('outputs') }
   }
+  const submit = (path, body) => mutate(`/${detail.id}/${path}`, body)
+  // Apollo actions wait for saved research edits and finished research.
+  const apolloBusy = busy || dirty || detail.status === 'researching'
+  const apollo = <>
+    <ApolloPanel detail={detail} busy={apolloBusy} submit={submit} />
+    {dirty && detail.apollo_configured && <p className="coverage">Save or discard research edits before using Apollo.</p>}
+  </>
   return <>
     <div className="workspace-heading"><div><small>FIRM WORKSPACE</small><h2>{detail.name}</h2><p>{detail.domain}</p></div>
       <span className="badge">{labels[detail.status]}</span></div>
@@ -110,7 +117,7 @@ function FirmWorkspace({ detail, busy, mutate, onDirty }) {
       <button id="outputs-tab" role="tab" aria-selected={tab === 'outputs'} aria-controls="outputs-panel" onClick={() => setTab('outputs')}>02 &nbsp; Create outputs</button>
     </div>
     <div id="research-panel" role="tabpanel" aria-labelledby="research-tab" hidden={tab !== 'research'}>
-      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} />
+      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} apollo={apollo} />
     </div>
     <div id="outputs-panel" role="tabpanel" aria-labelledby="outputs-tab" hidden={tab !== 'outputs'}>
       <OutputStudio detail={detail} busy={busy} mutate={mutate} approvalId={approvalId} onApproval={setApprovalId} />
@@ -118,7 +125,7 @@ function FirmWorkspace({ detail, busy, mutate, onDirty }) {
   </>
 }
 
-function ResearchEditor({ detail, busy, mutate, approve, onDirty }) {
+function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
   const [name, setName] = useState(detail.name)
   const [logoId, setLogoId] = useState(detail.preferred_logo_id ?? '')
   const [findings, setFindings] = useState(detail.brief)
@@ -157,6 +164,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty }) {
     {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${detail.brief.length} findings · ${detail.staff.length} staff records`}</p>}
     {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
     {detail.error && <p role="alert">{detail.error}</p>}
+    {apollo}
     <form className="research-form" onSubmit={save}>
       <label>Firm display name<input required maxLength={160} value={name} disabled={locked} onChange={e => setName(e.target.value)} /></label>
       <div className="section-title"><h3>Firm branding</h3><small>Choose the preferred saved logo.</small></div>
@@ -265,4 +273,25 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     {detail.proposals.some(p => p.status === 'ready') && <details><summary>Earlier PowerPoint downloads</summary>
       {detail.proposals.filter(p => p.status === 'ready').map(p => <p key={p.id}><a href={`${base}/${detail.id}/proposals/${p.id}/download`}>Brief #{p.id} · PowerPoint</a></p>)}</details>}
   </>
+}
+
+function ApolloPanel({ detail, busy, submit }) {
+  const org = detail.apollo_org
+  if (!detail.apollo_configured) return <div className="apollo-panel"><h3>Apollo</h3>
+    <p>Apollo not configured. Add <code>APOLLO_API_KEY</code> to the server <code>.env</code> to enrich firms from Apollo.</p></div>
+  const tech = org?.technology_names?.length ? org.technology_names : (org?.current_technologies || []).map(t => t.name)
+  const industries = org?.industries?.length ? org.industries : [org?.industry].filter(Boolean)
+  return <div className="apollo-panel"><h3>Apollo</h3>
+    {org ? <>
+      <p>Enriched on {detail.apollo_enriched_at?.slice(0, 10)} · {org.name}</p>
+      <dl>
+        <dt>Headcount</dt><dd>{org.estimated_num_employees ?? 'Not listed'}</dd>
+        <dt>Industries</dt><dd>{industries.join(', ') || 'Not listed'}</dd>
+        <dt>Tech stack ({tech.length})</dt><dd>{tech.join(', ') || 'Not listed'}</dd>
+      </dl>
+      <button disabled={busy} onClick={() => submit('apollo/enrich', { refresh: true })}>Refresh enrichment (1 credit)</button>
+    </> : <>
+      <p>Look up this firm's headcount, industries and technology in Apollo. Uses 1 Apollo credit.</p>
+      <button disabled={busy} onClick={() => submit('apollo/enrich', {})}>Enrich firm (1 credit)</button>
+    </>}</div>
 }
