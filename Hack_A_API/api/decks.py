@@ -34,6 +34,8 @@ def generate_deck(snapshot: str) -> bytes:
                 tools=[{"type": "code_interpreter", "container": container.id}],
                 tool_choice="required",
                 instructions=("Create a short editable sales proposal for Acctivity in Python. "
+                              "Reputation-search findings are unverified attributed observations, not "
+                              "firm facts, verified reviews or testimonials. "
                               "Use only the supplied approved evidence for firm facts; include source URLs. "
                               "Findings with source 'Apollo' come from Apollo's database, not the firm's "
                               "website: cite them as 'Source: Apollo' with their retrieved date, present "

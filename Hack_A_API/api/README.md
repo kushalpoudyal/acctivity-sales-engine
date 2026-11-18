@@ -8,7 +8,7 @@ lists firms; append `/{id}` to read the saved brief. `POST /api/v1/firms/{id}/re
 with JSON `{}` crawls the firm's public website then starts a paid OpenAI
 extraction; poll the firm detail until `status` is no longer `researching`.
 The crawler respects robots.txt, follows only the firm's domain (and www),
-prioritises staff/about/contact/service pages, and stops at 32 pages, 240,000
+prioritises staff/about/contact/service pages, and stops at 12 pages, 240,000
 text characters or 150 seconds. No login, JavaScript rendering or PDF parsing.
 Coverage and skipped pages are shown in the UI. Each extracted finding includes
 a source page and a verbatim supporting passage verified against fetched text.
@@ -75,12 +75,41 @@ loopback, not a public network.
 ### Focused checks
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs
+.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_web_research
 ```
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
 The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`
 overrides the shared default, with `OPENAI_RESEARCH_MODEL` and `OPENAI_DECK_MODEL`
 overriding individual operations. API model access depends on the OpenAI account.
+
+### Parallel research sources
+
+Research now runs the website crawl/extraction alongside two optional OpenAI
+`web_search` requests: wider public firm research and public reputation research.
+`POST /api/v1/firms/{id}/research` accepts
+`{"web_search":true,"reputation":true}` (both default on). Disable either in the UI
+or request body to avoid that source's paid model/tool calls. There are up to
+three simultaneous source tasks, not three serial searches. Each source gets
+its own status, count and error in `research_meta.sources`; one failed search
+does not discard a successful crawl. Partial coverage is marked `needs_review`.
+
+Findings carry `source_kind` (`website_crawl`, `web_search` or
+`reputation_search`) and a retrieval timestamp. Only the first-party extraction
+populates staff and logos. Search findings remain separately grouped and cited.
+Reputation observations are not a verified Google review sample and are unchecked
+for approval by default. They must not be presented as verified reviews, ratings,
+testimonials or established firm facts in output material. No Google Maps scraping
+or Google Places API is implemented. Twelve observations are an upper bound, not
+a promise to retrieve twelve reviews.
+
+Research progress records start, last-progress and completion timestamps. The
+website source reports page reading, structured extraction and logo retrieval
+as separate stages. The UI shows elapsed time and when its last API poll succeeded.
+API requests from the browser stop waiting after 15 seconds and offer reconnection;
+that does not cancel a background provider job. OpenAI network timeouts have
+`provider_timeout` errors; malformed structured model output is reported separately.
+The website's OpenAI call has a 180-second network timeout; search calls use 150
+seconds. These are network timeouts, not guarantees of a total end-to-end deadline.
 
 Review the findings, deselect anything unsuitable, then approve. Approval saves a
 snapshot without a paid request. **Generate PowerPoint** builds from that snapshot

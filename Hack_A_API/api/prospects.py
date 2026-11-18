@@ -1,19 +1,24 @@
 import json
 import hashlib
+import logging
 import os
 import re
 import sqlite3
 from contextlib import closing, contextmanager
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlsplit
+from threading import Lock
 
 import apollo
 from apollo_findings import apollo_findings
 import openai
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
 from decks import DeckError, generate_deck
-from firm_research import Person, ResearchError, crawl_site, download_logo, extract_profile
+from firm_research import MAX_PAGES, Person, ResearchError, crawl_site, download_logo, extract_profile
 from pydantic import BaseModel, Field
+from web_research import search_web
 
 router = APIRouter(prefix="/api/v1/firms", tags=["Prospects"])
 DB_PATH = Path(__file__).with_name("prospects.sqlite3")
@@ -461,39 +466,105 @@ def merge_apollo_person(db, firm_id: int, match: dict):
                    (firm_id, name, match.get("title"), match.get("linkedin_url") or "", *apollo_fields))
 
 
-def research(firm_id: int, domain: str):
-    def progress(count):
-        with database() as db:
-            db.execute("UPDATE firms SET research_meta=? WHERE id=?",
-                       (json.dumps({"stage": "Reading website pages", "pages_read": count}), firm_id))
+class ResearchOptions(BaseModel):
+    web_search: bool = True
+    reputation: bool = True
 
-    pages, warnings, logos = [], [], []
-    try:
-        pages, warnings = crawl_site(domain, progress)
-        with database() as db:
-            db.execute("UPDATE firms SET research_meta=? WHERE id=?",
-                       (json.dumps({"stage": "Extracting firm profile", "pages_read": len(pages)}), firm_id))
-        with openai.OpenAI(timeout=180, max_retries=0) as client:
-            brief, rejected = extract_profile(
-                client, os.getenv("OPENAI_RESEARCH_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-6.1-sol", pages)
-        if rejected:
-            warnings.append(f"{rejected} findings or staff fields omitted because supporting evidence could not be verified.")
-        for url in dict.fromkeys(url for page in pages for url in page.get("logos", [])):
+
+def crawl_research(domain: str, model: str, progress):
+    progress(stage="Reading website pages")
+    pages, warnings = crawl_site(domain, progress)
+    progress(stage="Extracting structured firm data")
+    with openai.OpenAI(timeout=180, max_retries=0) as client:
+        brief, rejected = extract_profile(client, model, pages)
+    for finding in brief:
+        finding["source_kind"] = "website_crawl"
+    if rejected:
+        warnings.append(f"{rejected} findings or staff fields omitted because supporting evidence could not be verified.")
+    logos = []
+    progress(stage="Saving published logos")
+    for url in dict.fromkeys(url for page in pages for url in page.get("logos", [])):
+        try:
+            logos.append(download_logo(url, domain))
+        except ResearchError as exc:
+            warnings.append(f"Logo {url}: {exc}")
+    return brief, pages, logos, warnings
+
+
+def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
+    options = options or ResearchOptions()
+    model = os.getenv("OPENAI_RESEARCH_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-6.1-sol"
+    firm = get_firm(firm_id)
+    enabled = ["website"] + (["web_search"] if options.web_search else []) + (
+        ["reputation"] if options.reputation else [])
+    started_at = datetime.now(timezone.utc).isoformat()
+    meta = {"stage": "Researching sources in parallel", "pages_read": 0, "max_pages": MAX_PAGES,
+            "started_at": started_at, "updated_at": started_at, "provider_timeout_seconds": 180,
+            "sources": {name: {"status": "running", "started_at": started_at,
+                               "stage": "Starting website crawl" if name == "website" else "Searching the web"}
+                        for name in enabled}}
+    lock = Lock()
+
+    def persist_progress(count=None, stage=None):
+        with lock:
+            if count is not None:
+                meta["pages_read"] = count
+            if stage is not None:
+                meta["sources"]["website"]["stage"] = stage
+            meta["updated_at"] = datetime.now(timezone.utc).isoformat()
+            with database() as db:
+                db.execute("UPDATE firms SET research_meta=? WHERE id=?", (json.dumps(meta), firm_id))
+
+    persist_progress()
+    results, errors = {}, {}
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(crawl_research, domain, model, persist_progress): "website"}
+        if options.web_search:
+            futures[executor.submit(search_web, domain, firm["name"], model)] = "web_search"
+        if options.reputation:
+            futures[executor.submit(search_web, domain, firm["name"], model, True)] = "reputation"
+        for future in as_completed(futures):
+            name = futures[future]
             try:
-                logos.append(download_logo(url, domain))
-            except ResearchError as exc:
-                warnings.append(f"Logo {url}: {exc}")
-        status = "ready" if brief else "needs_review"
-        error = None if brief else "No evidence-backed findings returned. Review the website or retry."
-    except ResearchError as exc:
-        status, brief, error = "failed", [], str(exc)
-    except openai.OpenAIError:
-        status, brief, error = "failed", [], "OpenAI research failed. Check model access, quota and connectivity."
+                value = future.result()
+                findings = value[0] if name == "website" else value
+                results[name] = value
+                source_status = {"status": "completed" if findings else "no_results", "findings": len(findings)}
+            except Exception as exc:
+                # Each independent provider task reports failure without discarding other sources.
+                logging.error("Research source %s failed for firm %s (%s).", name, firm_id, type(exc).__name__)
+                if isinstance(exc, openai.APITimeoutError):
+                    code = "provider_timeout"
+                    errors[name] = "OpenAI request timed out. Other source results are preserved; retry the research."
+                elif isinstance(exc, ResearchError):
+                    code = "research_error"
+                    errors[name] = str(exc)
+                else:
+                    code = "source_error"
+                    errors[name] = "Research source failed. Check provider access, quota and connectivity."
+                source_status = {"status": "failed", "error": errors[name], "error_code": code}
+            with lock:
+                meta["sources"][name] = {**meta["sources"][name], **source_status,
+                                          "stage": source_status["status"],
+                                          "finished_at": datetime.now(timezone.utc).isoformat()}
+            persist_progress()
+    crawl_brief, pages, logos, warnings = results.get("website", ([], [], [], []))
+    warnings.extend(f"{name}: {error}" for name, error in errors.items())
+    if not crawl_brief:
+        warnings.append("No new first-party staff records were extracted; previously saved staff and branding were retained.")
+    brief = crawl_brief + results.get("web_search", []) + results.get("reputation", [])
+    timestamp = datetime.now(timezone.utc).isoformat()
+    for finding in brief:
+        finding["retrieved_at"] = timestamp
+    status = "ready" if crawl_brief and not errors else "needs_review" if brief else "failed"
+    error = ("Some research sources failed. Review source coverage below." if errors and brief else
+             "No sourced findings returned. Review source coverage or retry." if not brief else None)
     with database() as db:
         if brief:
             db.execute("UPDATE firms SET brief=?, researched_at=CURRENT_TIMESTAMP WHERE id=?",
                        (json.dumps(brief), firm_id))
-            replace_website_staff(db, firm_id, brief)
+        if crawl_brief:
+            replace_website_staff(db, firm_id, crawl_brief)
             db.execute("UPDATE firms SET preferred_logo_id=NULL WHERE id=?", (firm_id,))
             db.execute("DELETE FROM brand_assets WHERE firm_id=?", (firm_id,))
             for logo in logos:
@@ -501,13 +572,14 @@ def research(firm_id: int, domain: str):
                            (firm_id, logo["source_url"], logo["mime_type"], logo["content"]))
         db.execute("UPDATE firms SET status=?, error=? WHERE id=?", (status, error, firm_id))
         db.execute("UPDATE firms SET research_meta=?,research_pages=? WHERE id=?",
-                   (json.dumps({"stage": status, "pages_read": len(pages), "warnings": warnings,
+                   (json.dumps({**meta, "stage": status, "finished_at": timestamp,
+                                "updated_at": timestamp, "pages_read": max(len(pages), meta["pages_read"]), "warnings": warnings,
                                 "pages": [{"url": p["url"], "title": p["title"]} for p in pages]}),
                     json.dumps(pages), firm_id))
 
 
 @router.post("/{firm_id}/research", status_code=202)
-def start_research(firm_id: int, tasks: BackgroundTasks, body: dict):
+def start_research(firm_id: int, tasks: BackgroundTasks, body: ResearchOptions):
     firm = get_firm(firm_id)
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(503, "Research is not configured on the server.")
@@ -515,7 +587,7 @@ def start_research(firm_id: int, tasks: BackgroundTasks, body: dict):
         if not db.execute("UPDATE firms SET status='researching',error=NULL,research_meta='{}' WHERE id=? AND status!='researching'",
                           (firm_id,)).rowcount:
             raise HTTPException(409, "Research is already running.")
-    tasks.add_task(research, firm_id, firm["domain"])
+    tasks.add_task(research, firm_id, firm["domain"], body)
     return {"id": firm_id, "status": "researching"}
 
 

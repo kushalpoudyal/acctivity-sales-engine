@@ -50,7 +50,7 @@ class DirectoryTests(unittest.TestCase):
         )), patch("prospects.extract_profile", return_value=(findings, 0)), patch("prospects.openai.OpenAI"):
             prospects.initialize()
             firm = prospects.add_firm(prospects.Intake(website="firm.example"))
-            prospects.research(firm["id"], "firm.example")
+            prospects.research(firm["id"], "firm.example", prospects.ResearchOptions(web_search=False, reputation=False))
             detail = prospects.get_firm(firm["id"])
             self.assertEqual(detail["staff"][0]["position"], "Partner")
             approval = prospects.approve(firm["id"], prospects.Approval(

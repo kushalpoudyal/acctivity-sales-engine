@@ -6,22 +6,30 @@ import FindFirms from './FindFirms'
 const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
 const formatLabels = { pptx: 'PowerPoint proposal', docx: 'Word proposal', pdf: 'Welcome PDF' }
+const sourceLabels = { website: 'Website crawl', website_crawl: 'Website crawl', web_search: 'OpenAI web search', reputation: 'Public reputation search', reputation_search: 'Public reputation search' }
 
 async function request(path = '', options) {
-  const res = await fetch(base + path, options)
-  if (!res.headers.get('content-type')?.includes('application/json')) {
-    throw new Error('Cannot reach the firms API. Check the FastAPI server on port 9001.')
-  }
-  const result = await res.json()
-  if (!res.ok) {
-    const message = Array.isArray(result.detail) ? result.detail.map(e => e.msg).join('; ') : result.detail
-    throw new Error(typeof message === 'string' ? message : `Request failed (${res.status}).`)
-  }
-  if (/^\/\d+$/.test(path) && (!Array.isArray(result.outputs) ||
-      !Array.isArray(result.proposals) || result.proposals.some(p => !p.snapshot))) {
-    throw new Error('The API is running an older workspace version. Restart FastAPI on port 9001, then refresh.')
-  }
-  return result
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15000)
+  try {
+    const res = await fetch(base + path, { ...options, signal: controller.signal })
+    if (!res.headers.get('content-type')?.includes('application/json')) {
+      throw new Error('Cannot reach the firms API. Check the FastAPI server on port 9001.')
+    }
+    const result = await res.json()
+    if (!res.ok) {
+      const message = Array.isArray(result.detail) ? result.detail.map(e => e.msg).join('; ') : result.detail
+      throw new Error(typeof message === 'string' ? message : `Request failed (${res.status}).`)
+    }
+    if (/^\/\d+$/.test(path) && (!Array.isArray(result.outputs) ||
+        !Array.isArray(result.proposals) || result.proposals.some(p => !p.snapshot))) {
+      throw new Error('The API is running an older workspace version. Restart FastAPI on port 9001, then refresh.')
+    }
+    return result
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The API did not respond within 15 seconds. The background job may still be running; refresh to reconnect, rather than starting another paid run.')
+    throw error
+  } finally { clearTimeout(timer) }
 }
 
 export default function Prospects() {
@@ -36,6 +44,7 @@ export default function Prospects() {
   const [dirty, setDirty] = useState(false)
   const [version, refresh] = useState(0)
   const [query, search] = useState('')
+  const [lastPollAt, setLastPollAt] = useState(null)
   const reload = useCallback(() => refresh(v => v + 1), [])
   useEffect(() => {
     let active = true
@@ -44,7 +53,7 @@ export default function Prospects() {
       try {
         const [rows, selected] = await Promise.all([request(), id ? request('/' + id) : null])
         if (!active) return
-        setFirms(rows); setDetail(selected)
+        setFirms(rows); setDetail(selected); setLastPollAt(Date.now())
         if (rows.some(row => row.status === 'researching') ||
             selected?.proposals.some(p => p.status === 'building') ||
             selected?.outputs?.some(job => ['queued', 'running'].includes(job.status))) {
@@ -96,13 +105,13 @@ export default function Prospects() {
         <strong>{f.name}</strong><span>{f.domain}</span><small data-status={f.status}>{labels[f.status]}</small></button>)}
       {!matches.length && <p>{firms.length ? 'No matching firms.' : 'No firms saved yet.'}</p>}</aside>
     <section className="workspace">{detail && detail.id === id
-      ? <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} />
+      ? <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} lastPollAt={lastPollAt} />
       : <><h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></>}</section></div>
   </main>
   </div>
 }
 
-function FirmWorkspace({ detail, busy, dirty, mutate, onDirty }) {
+function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt }) {
   const [tab, setTab] = useState('research')
   const [approvalId, setApprovalId] = useState(null)
   // Approval sends the ticked website findings (brief indices) and the ticked Apollo finding keys.
@@ -127,7 +136,7 @@ function FirmWorkspace({ detail, busy, dirty, mutate, onDirty }) {
       <button id="outputs-tab" role="tab" aria-selected={tab === 'outputs'} aria-controls="outputs-panel" onClick={() => setTab('outputs')}>02 &nbsp; Create outputs</button>
     </div>
     <div id="research-panel" role="tabpanel" aria-labelledby="research-tab" hidden={tab !== 'research'}>
-      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} apollo={apollo} />
+      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} apollo={apollo} lastPollAt={lastPollAt} />
     </div>
     <div id="outputs-panel" role="tabpanel" aria-labelledby="outputs-tab" hidden={tab !== 'outputs'}>
       <OutputStudio detail={detail} busy={busy} mutate={mutate} approvalId={approvalId} onApproval={setApprovalId} />
@@ -135,13 +144,15 @@ function FirmWorkspace({ detail, busy, dirty, mutate, onDirty }) {
   </>
 }
 
-function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
+function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPollAt }) {
   const [name, setName] = useState(detail.name)
   const [logoId, setLogoId] = useState(detail.preferred_logo_id ?? '')
   const [findings, setFindings] = useState(detail.brief)
-  const [selected, setSelected] = useState(detail.brief.map((_, i) => i))
+  const [selected, setSelected] = useState(detail.brief.flatMap((f, i) => f.source_kind === 'reputation_search' ? [] : [i]))
   const [apolloSelected, setApolloSelected] = useState((detail.apollo_findings || []).map(item => item.key))
   const count = selected.length + apolloSelected.length
+  const [webSearch, setWebSearch] = useState(true)
+  const [reputation, setReputation] = useState(true)
   const [notice, setNotice] = useState('')
   const dirty = name !== detail.name || String(logoId) !== String(detail.preferred_logo_id ?? '') ||
     JSON.stringify(findings) !== JSON.stringify(detail.brief)
@@ -165,15 +176,19 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
   }
   async function runResearch() {
     if (detail.brief.length && !window.confirm('Re-read the website? This paid run replaces current research and staff records. Approved briefs stay unchanged.')) return
-    const result = await mutate(`/${detail.id}/research`, {})
+    const result = await mutate(`/${detail.id}/research`, { web_search: webSearch, reputation })
     if (result) setNotice('Research started. Page coverage and results will update here.')
   }
   const categories = [...new Set(findings.map(f => f.category || 'Website findings'))]
   return <>
-    <div className="research-toolbar"><div><h3>Website research</h3><p>Read public team profiles, services and contact pages. Each run may incur charges.</p></div>
+    <div className="research-toolbar"><div><h3>Research sources</h3><p>Read up to 12 priority website pages. Enabled OpenAI searches run alongside the crawl; each source adds paid usage.</p>
+      <label className="choice"><input type="checkbox" checked disabled /> Website crawl and staff extraction</label>
+      <label className="choice"><input type="checkbox" checked={webSearch} disabled={locked} onChange={e => setWebSearch(e.target.checked)} /> OpenAI wider web search</label>
+      <label className="choice"><input type="checkbox" checked={reputation} disabled={locked} onChange={e => setReputation(e.target.checked)} /> Public reputation search (not a verified Google review sample)</label></div>
       <button type="button" disabled={locked || dirty} onClick={runResearch}>{detail.status === 'researching' ? 'Researching…' : 'Run website research'}</button></div>
     {notice && <p role="status">{notice}</p>}
-    {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${detail.brief.length} findings · ${detail.staff.length} staff records`}</p>}
+    {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.status !== 'researching' && 'Last run: '}{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${detail.brief.length} findings · ${detail.staff.length} staff records`}</p>}
+    {detail.research_meta?.sources && <ResearchProgress meta={detail.research_meta} active={detail.status === 'researching'} lastPollAt={lastPollAt} />}
     {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
     {detail.error && <p role="alert">{detail.error}</p>}
     {apollo}
@@ -191,6 +206,8 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
       {categories.map(category => <div key={category}><h3 className="category-heading">{category}</h3>
         <div className="finding-list">{findings.map((item, index) => (item.category || 'Website findings') === category &&
           <article className="finding-card" key={index}>
+            {item.source_kind && <span className="badge">{sourceLabels[item.source_kind]}</span>}
+            {item.not_verified_review_sample && <p className="reputation-note">Unverified public reputation signal, not a Google review sample or established firm fact. Excluded from approval by default; review before including in sales material.</p>}
             <label className="choice"><input type="checkbox" checked={selected.includes(index)} disabled={locked}
               onChange={e => setSelected(e.target.checked ? [...selected, index] : selected.filter(n => n !== index))} />
               <strong>Include {item.title || `finding ${index + 1}`}</strong></label>
@@ -220,6 +237,29 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
     <div className="approval-bar"><div><strong>{count} {count === 1 ? 'finding' : 'findings'} selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
       <button disabled={locked || dirty || !count} onClick={() => approve(selected, apolloSelected)}>Approve &amp; create outputs →</button></div>
   </>
+}
+
+function ResearchProgress({ meta, active, lastPollAt }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  function duration(start, end) {
+    const seconds = Math.max(0, Math.floor(((end ? Date.parse(end) : now) - Date.parse(start)) / 1000))
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+  }
+  return <div>
+    <p className="coverage">{meta.started_at && `Elapsed ${duration(meta.started_at, meta.finished_at)} · `}
+      {lastPollAt && `API last responded ${Math.max(0, Math.floor((now - lastPollAt) / 1000))}s ago`}
+      {meta.updated_at && ` · Last progress ${duration(meta.updated_at)} ago`}</p>
+    <div className="source-status" aria-live="polite">{Object.entries(meta.sources).map(([source, result]) =>
+      <div key={source}><strong>{sourceLabels[source]}</strong>
+        <span>{result.status === 'running' ? result.stage || result.status : result.status}{result.findings != null && ` · ${result.findings} findings`}</span>
+        {result.started_at && <small>{duration(result.started_at, result.finished_at)}</small>}
+        {result.error && <p>{result.error}</p>}</div>)}</div>
+    {active && <small>Page reading, model extraction and logo retrieval are separate steps. An old progress timestamp does not prove a timeout; provider timeouts are reported explicitly per source.</small>}
+  </div>
 }
 
 function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {

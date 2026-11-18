@@ -57,7 +57,8 @@ class ContactTests(unittest.TestCase):
                                                             "text": "team"}], [])), \
                 patch("prospects.extract_profile", return_value=(brief_with(*people), 0)), \
                 patch("prospects.openai.OpenAI"):
-            prospects.research(firm_id, "firm.example")
+            prospects.research(firm_id, "firm.example",
+                               prospects.ResearchOptions(web_search=False, reputation=False))
 
     def staff(self, firm_id):
         return prospects.get_firm(firm_id)["staff"]

@@ -8,9 +8,10 @@ The original design below is retained as a proposal; the current prototype diffe
 
 - The working Research and Create outputs tabs live at `/prospects?firm={id}`.
 - Storage is local SQLite, selected for the prototype, rather than PostgreSQL.
-- Research now uses a bounded first-party crawler followed by structured OpenAI
-  extraction, rather than relying on web-search summaries. Staff records,
-  supporting passages and permitted same-domain logo images are saved.
+- Research uses a 12-page first-party crawl and structured extraction alongside
+  optional OpenAI web and public reputation searches. Sources have separate
+  statuses, timings and citations. Reputation observations are not verified
+  Google reviews and are excluded from approval by default.
 - `PUT /api/v1/firms/{id}/brief` saves rep edits with a concurrency token.
   `POST /api/v1/firms/{id}/approvals` freezes selected findings.
 - `POST /api/v1/firms/{id}/outputs` accepts an approval, selected `pptx`/`docx`/`pdf`
@@ -19,9 +20,11 @@ The original design below is retained as a proposal; the current prototype diffe
 - One explicit container generates the selected files; validated downloads are
   persisted in SQLite before container deletion. Partial results remain available.
 - The default model is `gpt-6.1-sol`. A live test generated all three formats;
-  16 focused tests and the client lint/production build passed.
-- Apollo, CRM, live tenant provisioning, authentication and a resumable external
-  worker remain unimplemented. Keep this prototype on loopback.
+  62 combined research, output and Apollo tests and the client lint/build passed.
+- Optional Apollo firm/contact enrichment and approval are implemented. Website
+  research preserves Apollo contacts. CRM, live tenant provisioning,
+  authentication and a resumable external worker remain unimplemented.
+  Keep this prototype on loopback.
 
 The API and client READMEs contain the current operational contract.
 

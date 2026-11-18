@@ -197,6 +197,10 @@
 .prospects .apollo-compact { display: flex; flex-wrap: wrap; gap: 8px; }
 .prospects .apollo-compact li { margin: 0; padding: 6px 12px; border-radius: 999px; }
 .prospects .apollo-compact .choice { margin: 0; min-height: 0; }
+.prospects .source-status { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 16px 0; }
+.prospects .source-status > div { padding: 16px; border: 1px solid var(--grey-100); border-radius: 12px; font-size: .85rem; }
+.prospects .source-status span { display: block; color: var(--grey-600); }
+.prospects .reputation-note { padding: 12px; background: #fff0d4; border-radius: 8px; font-size: .85rem; }
 
 @media (max-width: 1000px) {
   .prospects .prospect-grid { grid-template-columns: 300px minmax(0, 1fr); }
