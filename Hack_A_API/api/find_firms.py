@@ -19,8 +19,12 @@ from prospects import database, firm_domain
 
 router = APIRouter(prefix="/api/v1/apollo/firm-search", tags=["Apollo"])
 
+# Small and medium firms only (ABS definition: small 1-19 employees, medium 20-199). Enforced, not
+# just a default: a blank size filter falls back to these, and larger or open-ended ranges are refused.
+SME_RANGES = ["1,19", "20,199"]
+MAX_EMPLOYEES = 199
 DEFAULTS = {"keywords": ["law firm", "legal", "lawyers"], "naics": ["5411"],
-            "locations": ["New Zealand", "Australia"], "employees": ["5,200"]}
+            "locations": ["New Zealand", "Australia"], "employees": SME_RANGES}
 MISSING_FIELDS = ["employee count", "industry", "location"]
 RECRUITER = re.compile(r"recruit|staffing|talent|headhunt|personnel", re.IGNORECASE)
 
@@ -57,9 +61,14 @@ class FirmSearch(BaseModel):
 
     @field_validator("employees")
     @classmethod
-    def ranges(cls, values: list[str]) -> list[str]:
-        if any(not re.fullmatch(r"\d+,\d*", v) for v in values):
-            raise ValueError('Employee ranges look like "5,200" (min,max) or "500," (no max).')
+    def small_and_medium_only(cls, values: list[str]) -> list[str]:
+        if not values:
+            return list(SME_RANGES)
+        for value in values:
+            match = re.fullmatch(r"(\d+),(\d+)", value)
+            if not match or not 1 <= int(match[1]) <= int(match[2]) <= MAX_EMPLOYEES:
+                raise ValueError(f'Only small and medium firms: employee ranges must be "min,max" with a max of '
+                                 f'{MAX_EMPLOYEES} or less, e.g. "1,19" (small) or "20,199" (medium).')
         return values
 
 
@@ -128,8 +137,7 @@ def search_firms(body: FirmSearch | None = None):
     filters = {"q_organization_keyword_tags": body.keywords}
     if body.locations:
         filters["organization_locations"] = body.locations
-    if body.employees:
-        filters["organization_num_employees_ranges"] = body.employees
+    filters["organization_num_employees_ranges"] = body.employees  # never empty: see small_and_medium_only
     try:
         result = apollo.search_orgs(filters, page=body.page)
     except apollo.ApolloError as exc:

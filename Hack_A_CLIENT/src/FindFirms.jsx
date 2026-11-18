@@ -4,7 +4,7 @@ import './FindFirms.css'
 const searchUrl = '/api/v1/apollo/firm-search'
 const fields = [
   ['keywords', 'Keyword tags'], ['naics', 'NAICS codes (checked on results)'],
-  ['locations', 'Locations'], ['employees', 'Employee ranges (min,max)'],
+  ['locations', 'Locations'], ['employees', 'Employee ranges (min,max; small and medium firms only, max 199)'],
 ]
 
 async function call(url, options) {

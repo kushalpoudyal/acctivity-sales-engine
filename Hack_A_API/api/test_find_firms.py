@@ -52,7 +52,7 @@ class FindFirmsTests(unittest.TestCase):
                 self.assertFalse(self.client.get(self.url).json()["configured"])
         self.assertTrue(data["configured"])
         self.assertEqual(data["defaults"], {"keywords": ["law firm", "legal", "lawyers"], "naics": ["5411"],
-                                            "locations": ["New Zealand", "Australia"], "employees": ["5,200"]})
+                                            "locations": ["New Zealand", "Australia"], "employees": ["1,19", "20,199"]})
         self.assertEqual(fake.requests, [])
 
     def test_one_page_per_call_with_default_filters(self):
@@ -64,7 +64,7 @@ class FindFirmsTests(unittest.TestCase):
         self.assertEqual(fake.requests[0].url.path, "/api/v1/mixed_companies/search")
         self.assertEqual(fake.body(0), {"per_page": 100, "q_organization_keyword_tags": ["law firm", "legal", "lawyers"],
                                         "organization_locations": ["New Zealand", "Australia"],
-                                        "organization_num_employees_ranges": ["5,200"], "page": 1})
+                                        "organization_num_employees_ranges": ["1,19", "20,199"], "page": 1})
         self.assertEqual(fake.body(1)["page"], 2)
         data = response.json()
         self.assertEqual((data["page"], data["total_entries"], data["total_pages"], data["credits"]), (1, 11900, 119, 1))
@@ -99,7 +99,9 @@ class FindFirmsTests(unittest.TestCase):
         self.assertTrue(rows["o1"]["already_added"])
 
     def test_invalid_form_spends_nothing(self):
-        for body in ({"keywords": [" "]}, {"naics": ["54x"]}, {"employees": ["5-200"]}, {"page": 0}):
+        for body in ({"keywords": [" "]}, {"naics": ["54x"]}, {"employees": ["5-200"]}, {"page": 0},
+                     {"employees": ["200,500"]}, {"employees": ["1,19", "50,1000"]}, {"employees": ["500,"]},
+                     {"employees": ["0,19"]}, {"employees": ["50,20"]}):
             with self.subTest(body=body), FakeApollo(payload=PAGE) as fake:
                 self.assertEqual(self.client.post(self.url, json=body).status_code, 422)
                 self.assertEqual(fake.requests, [])
@@ -107,8 +109,9 @@ class FindFirmsTests(unittest.TestCase):
     def test_naics_is_checked_on_results_not_sent_to_apollo(self):
         with FakeApollo(payload=PAGE) as fake:
             rows = self.client.post(self.url, json={"naics": ["5613"], "locations": [], "employees": []}).json()["results"]
+        # A blank size filter still searches small and medium firms only.
         self.assertEqual(fake.body(), {"per_page": 100, "q_organization_keyword_tags": ["law firm", "legal", "lawyers"],
-                                       "page": 1})
+                                       "organization_num_employees_ranges": ["1,19", "20,199"], "page": 1})
         self.assertEqual({r["apollo_id"]: r["naics_match"] for r in rows if r["naics_match"] is not None},
                          {"o1": False, "o2": False, "o4": True})
 
