@@ -10,6 +10,11 @@ environment and writes a sales proposal slide deck.
 - **Input:** the law firms / lawyers we want to pitch Acctivity to.
 - **Output:** personalised sales material for each prospect: docs, images, prospect profiles and videos.
 
+## Context
+
+Decisions, research and open questions live in [`context/`](context/CONTEXT.md).
+Log every decision in [`context/LOG.md`](context/LOG.md).
+
 ## Status
 
 Part 1: repo set up.
