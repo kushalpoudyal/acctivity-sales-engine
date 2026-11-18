@@ -39,7 +39,7 @@ Decisions and progress go in `LOG.md` (append-only).
 - LinkedIn pages generally can't be read without logging in, and scraping is against LinkedIn's terms, so
   "LinkedIn" in approach 1 likely means just the profile URL found on the firm's site.
 - API keys (LLM, Apollo, Sendspark) can't live in the browser → the React front end needs the back end.
-- Apollo API researched 18/11 → `APOLLO.md` (~2 credits per firm; email yes, phone async; tech-stack coverage of legal software unknown).
+- Apollo API researched 18/11 → `APOLLO.md` (~2 credits per firm; email yes, phone async). Probed 18/11: firm search is allowed on our plan; `technology_names` lists web/IT tools only, no legal software; Apollo has few people at small AU firms.
 
 ## Parts
 
@@ -58,7 +58,7 @@ Decisions and progress go in `LOG.md` (append-only).
 - Q3: input shape: website URL only (per brief), or also a name/LinkedIn/CSV list?
 - Q4: does "tailored demo environment" (in the brief) stay in scope?
 - Q5: LLM provider / image generation / slide-deck tool. Video candidate: **Sendspark** (see `SENDSPARK.md`)
-- Q6: build approach 1 first with Apollo optional, or go straight to Apollo?
+- Q6: ~~approach 1 first or straight to Apollo?~~ answered 18/11: Apollo is an optional add-on (enrich + find firms), click-to-spend. Plan in LOG.md; issues #3–#7.
 
 ## Tools researched
 
@@ -66,4 +66,4 @@ Decisions and progress go in `LOG.md` (append-only).
 - [Technical design and implementation status](./TECHNICAL_DESIGN.md): research, approvals, structured staff/branding and container-generated PPTX/DOCX/PDF downloads.
 
 - **Sendspark** (videos): `SENDSPARK.md`. API + webhooks on Growth ($99/mo); fills variables into one recorded base video; async, poll or webhook.
-- **Apollo** (input approach 2): `APOLLO.md`. Org enrich (1 credit) → people search (free, names obfuscated) → people match (1 credit email, +8 mobile).
+- **Apollo** (input approach 2): `APOLLO.md`. Org enrich (1 credit) → people search (free, names obfuscated) → people match (1 credit email, +8 mobile). Firm search: 1 credit/page, **allowed** on our plan (needs a law-practice filter to drop recruiters). Probe: `Hack_A_API/api/apollo_probe.py`.

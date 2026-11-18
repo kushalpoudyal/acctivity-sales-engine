@@ -88,6 +88,33 @@ in a private OpenAI Code Interpreter container and saves the validated `.pptx`
 in local SQLite before offering a download. A failed build can be retried without
 re-running research. Set `OPENAI_DECK_MODEL` to override the build model.
 
+Apollo is optional. Without `APOLLO_API_KEY` in `.env` everything above works and the
+firm detail reports `apollo_configured: false` ("Apollo not configured" in the UI).
+With a key, `POST /api/v1/firms/{id}/apollo/enrich` spends **1 Apollo credit** to store
+the firm's Apollo organization (headcount, industries, tech stack) in `firms.apollo_org`;
+enriching again requires `{"refresh": true}`. `apollo.py` is the client (no retries; the
+key is sent only to Apollo). Tests mock HTTP and never spend credits.
+
+Contacts: `GET /api/v1/firms/{id}/apollo/candidates?titles=Partner,CFO` (free) searches
+Apollo people at the firm by title, or by `seniorities=` if given. A title-only search that
+finds nobody is retried by seniority (owner, founder, c_suite, partner, head, director,
+manager); `search`/`fallback` in the response say which search produced the list.
+`POST /api/v1/firms/{id}/apollo/reveal {"ids": [...]}` spends **1 credit per matched person**
+(work email only, no phones), in batches of 10, and refuses ids already stored with an email.
+Revealed people merge into `staff` by name (case-insensitive): `source` is `website`,
+`apollo` or `both`; Apollo fills `apollo_email`, `email_status`, `linkedin_url`,
+`match_confidence`. Re-running research replaces only website-only staff rows.
+
+Apollo findings: the firm detail's `apollo_findings` turns the stored Apollo data into
+reviewable findings (`apollo_findings.py`): one per industry, keyword and technology, and one
+per revealed contact (email, LinkedIn). Each has a stable `key` (e.g. `apollo:tech:cloudflare`,
+`apollo:contact:<apollo id>`), `source: "Apollo"`, `retrieved_at` (enrich or reveal date), a
+"Source: Apollo, retrieved …" source label and no evidence passage. Approve with
+`{"brief_token", "findings": [website indices], "apollo_findings": [keys]}`; only the selected
+ones are appended to the snapshot, so the demo export and deck see nothing that was unticked.
+`brief_token` also covers the Apollo findings (a new enrich or reveal asks for a fresh review);
+without Apollo data it is the brief digest, as before.
+
 This single-process local prototype uses the ignored `prospects.sqlite3` database
 next to the API. A restart marks interrupted searches failed, without automatic
 paid retries. Keep both dev servers on loopback; there is no user authentication yet.
