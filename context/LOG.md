@@ -13,3 +13,4 @@
 - 2026-11-18 · Cody Marcus (GitHub codymarcus) invited as collaborator with write access. (Kushal)
 - 2026-11-18 · Hessam Imen (GitHub hessamimen) invited as collaborator with write access. (Kushal)
 - 2026-11-18 · Correction: Cody's GitHub account is c-m-l-d and Paul Cushing's is cushbush (both write). The codymarcus invite above was the wrong account and no longer applies. (Kushal)
+- 2026-11-18 · Docker local dev: Hack_A_API/api + Hack_A_CLIENT Dockerfiles and root compose.yaml (live reload, polling for Windows); Vite /api/v1 proxy target configurable via API_URL. (Cody)
