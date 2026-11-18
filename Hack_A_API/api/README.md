@@ -117,6 +117,37 @@ overrides the shared default, with `OPENAI_RESEARCH_MODEL` and `OPENAI_DECK_MODE
 (the copy call) overriding individual operations. API model access depends on the
 OpenAI account.
 
+Apollo is optional. Without `APOLLO_API_KEY` in `.env` everything above works and the
+firm detail reports `apollo_configured: false` ("Apollo not configured" in the UI).
+With a key, `POST /api/v1/firms/{id}/apollo/enrich` spends **1 Apollo credit** to store
+the firm's Apollo organization (headcount, industries, tech stack) in `firms.apollo_org`;
+enriching again requires `{"refresh": true}`. `apollo.py` is the client (no retries; the
+key is sent only to Apollo). Tests mock HTTP and never spend credits.
+
+Contacts: `GET /api/v1/firms/{id}/apollo/candidates?titles=Partner,CFO` (free) searches
+Apollo people at the firm by title, or by `seniorities=` if given. A title-only search that
+finds nobody is retried by seniority (owner, founder, c_suite, partner, head, director,
+manager); `search`/`fallback` in the response say which search produced the list.
+`POST /api/v1/firms/{id}/apollo/reveal {"ids": [...]}` spends **1 credit per matched person**
+(work email only, no phones), in batches of 10, and refuses ids already stored with an email.
+Revealed people are saved in the `apollo_contacts` table (name, Apollo title, `apollo_email`,
+`email_status`, `linkedin_url`, `match_confidence`, reveal date), apart from website research,
+so re-running research never drops them. Each contact's `person_id` is the website person with
+the same name (case-insensitive), or null. Contacts revealed by earlier versions into the old
+`staff` table are copied over at startup.
+
+Apollo findings: the firm detail's `apollo_findings` turns the stored Apollo data into
+reviewable findings (`apollo_findings.py`): one per industry, keyword and technology, and one
+per revealed contact (email, LinkedIn). Each has a stable `key` (e.g. `apollo:tech:cloudflare`,
+`apollo:contact:<apollo id>`), `source: "Apollo"`, `retrieved_at` (enrich or reveal date), a
+"Source: Apollo, retrieved …" source label and no evidence passage. Approve with
+`{"brief_token", "people": [ids], ..., "apollo_findings": [keys]}`; only the selected ones go
+into the snapshot's `apollo` list, so the demo export and outputs see nothing that was unticked.
+Outputs label them as Apollo-reported: approved contacts join the people lists (the Word
+proposal shows their email and LinkedIn), and industries, keywords and technology appear as
+"Reported by Apollo". Revealed emails and LinkedIn URLs are never sent to OpenAI.
+`brief_token` also covers the Apollo findings, so a new enrich or reveal asks for a fresh review.
+
 This single-process local prototype uses the ignored `prospects.sqlite3` database
 next to the API. A restart marks interrupted searches failed, without automatic
 paid retries. Keep both dev servers on loopback; there is no user authentication yet.

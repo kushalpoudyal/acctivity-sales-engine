@@ -6,6 +6,7 @@ import openai
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from find_firms import router as find_firms_router
 from prospects import initialize, router
 from outputs import router as outputs_router
 
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Hack A API", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
+app.include_router(find_firms_router)
 app.include_router(outputs_router)
 
 

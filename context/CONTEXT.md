@@ -70,6 +70,11 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
   Steel Blue `#4396BA`, accents Light Pink/Gold/Rouge/Light Grey), Lora headings + Inter body, watercolour illustrations
   and background. `brand/BRAND.md` is the guide the templates implement. Generated material uses Acctivity colours only
   (prospect logo optional, cover only). PDF embeds the fonts; PPTX/DOCX need Lora + Inter installed, else serif/sans fallback.
+- **Apollo (optional, click-to-spend; `apollo.py`, `find_firms.py`, `apollo_findings.py`):** firm enrichment (1 credit,
+  stored on the firm), free people search, email reveal (1 credit per person, batches of 10, never twice) into an
+  `apollo_contacts` table kept apart from website research and linked to `people` by name; industries, keywords, tech
+  stack and contacts are approvable Apollo findings (`apollo` in the snapshot), shown in outputs as Apollo-reported.
+  Revealed emails never go to OpenAI. **Find firms** searches Apollo for small/medium law firms (1 credit/page).
 - **Demo export:** our own JSON schema, **not** an Acctivity import contract; creates no tenants/users and sends no invites.
 - **Models:** research + deck default `gpt-6.1-sol`; override with `OPENAI_MODEL`, or per step `OPENAI_RESEARCH_MODEL` /
   `OPENAI_DECK_MODEL`. Only `OPENAI_API_KEY` is required (`.env`). The README and `.env.example` also mention
@@ -79,11 +84,13 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
 **Client** (`Hack_A_CLIENT/`, Vite dev server on `127.0.0.1:5173`, proxies `/api/v1` → `:9001`):
 - `/prospects`: live directory (`Prospects.jsx`): add/filter firms, run or re-extract research, review/edit records by kind
   (practice areas, people with linked areas, offices, facts) with source links, approve, generate + download PPTX/DOCX/PDF.
+- Find firms panel (Apollo search, review list, add to directory) and Apollo panels in the Research tab
+  (enrich, find people, reveal emails, Apollo contacts table, review Apollo findings).
 - `/sales-studio.html`: clickable **mockup** of the full sales engine (browse firms, add one with optional **Apollo**
   enrichment, simulated research + output). Fictional data, no API calls.
 - Landing page with a checklist (in-memory).
 
-**Not built yet:** Apollo (mockup only), Sendspark/videos, per-prospect images (outputs use the brand illustrations), Acctivity product content for proposals, live Acctivity demo environment, auth.
+**Not built yet:** Sendspark/videos, per-prospect images (outputs use the brand illustrations), Acctivity product content for proposals, live Acctivity demo environment, auth.
 
 ## Notes on the feed (Claude, 18/11, unverified until probed)
 
@@ -92,7 +99,7 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
 - LinkedIn pages generally can't be read without logging in, and scraping is against LinkedIn's terms, so
   "LinkedIn" in approach 1 likely means just the profile URL found on the firm's site.
 - API keys (LLM, Apollo, Sendspark) can't live in the browser → the React front end needs the back end.
-- Apollo API researched 18/11 → `APOLLO.md` (~2 credits per firm; email yes, phone async; tech-stack coverage of legal software unknown).
+- Apollo API researched 18/11 → `APOLLO.md` (~2 credits per firm; email yes, phone async). Probed 18/11: firm search is allowed on our plan; `technology_names` lists web/IT tools only, no legal software; Apollo has few people at small AU firms.
 
 ## Parts
 
@@ -115,13 +122,12 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
 - Q5: LLM provider / image generation / slide-deck tool. As built: OpenAI for research + copy; our own python-pptx /
   python-docx / reportlab templates for the files.
   Images still open. Video candidate: **Sendspark** (see `SENDSPARK.md`)
-- Q6: build approach 1 first with Apollo optional, or go straight to Apollo? As built: approach 1 first;
-  Apollo appears as an option in the mockup only.
+- Q6: ~~approach 1 first or straight to Apollo?~~ answered 18/11: Apollo is an optional add-on (enrich + find firms), click-to-spend. Plan in LOG.md; issues #3–#7.
 
 ## Tools researched
 
 - [Product requirements](./REQUIREMENTS.md): hackathon scope, acceptance checks and optional Apollo checkbox.
-- [Technical design and implementation status](./TECHNICAL_DESIGN.md): research, approvals, structured staff/branding and container-generated PPTX/DOCX/PDF downloads.
+- [Technical design and implementation status](./TECHNICAL_DESIGN.md): research, approvals, normalised research records, branding and template-built PPTX/DOCX/PDF downloads.
 
 - **Sendspark** (videos): `SENDSPARK.md`. API + webhooks on Growth ($99/mo); fills variables into one recorded base video; async, poll or webhook.
-- **Apollo** (input approach 2): `APOLLO.md`. Org enrich (1 credit) → people search (free, names obfuscated) → people match (1 credit email, +8 mobile).
+- **Apollo** (input approach 2): `APOLLO.md`. Org enrich (1 credit) → people search (free, names obfuscated) → people match (1 credit email, +8 mobile). Firm search: 1 credit/page, **allowed** on our plan (needs a law-practice filter to drop recruiters). Probe: `Hack_A_API/api/apollo_probe.py`.

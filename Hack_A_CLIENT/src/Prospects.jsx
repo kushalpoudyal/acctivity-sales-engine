@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './Prospects.css'
+import FindFirms from './FindFirms'
 
 const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
@@ -83,6 +84,7 @@ export default function Prospects() {
       <p>Research the firm. Review its people. Build a sales pack that feels personal.</p></header>
     <form className="intake" onSubmit={add}><h2>Add a firm</h2><label>Firm website<input name="website" required maxLength={2048} placeholder="firm.com.au" /></label>
       <label>Display name (optional)<input name="display_name" maxLength={160} /></label><button disabled={busy}>Save firm</button></form>
+    <FindFirms onAdded={reload} />
     {error && <div role="alert" className="error-banner">{error} <button onClick={() => { setError(''); reload() }}>Refresh</button></div>}
     <div className="prospect-grid"><aside className="directory"><h2>Firms <span className="badge">{firms.length}</span></h2>
       <label>Filter directory<input value={query} onChange={e => search(e.target.value)} placeholder="Name or website" /></label>
@@ -90,18 +92,28 @@ export default function Prospects() {
         <strong>{f.name}</strong><span>{f.domain}</span><small>{labels[f.status]}</small></button>)}
       {!matches.length && <p>{firms.length ? 'No matching firms.' : 'No firms saved yet.'}</p>}</aside>
     <section className="workspace">{detail && detail.id === id
-      ? <FirmWorkspace key={id} detail={detail} busy={busy} mutate={mutate} onDirty={setDirty} />
+      ? <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} />
       : <><h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></>}</section></div>
   </main>
 }
 
-function FirmWorkspace({ detail, busy, mutate, onDirty }) {
+function FirmWorkspace({ detail, busy, dirty, mutate, onDirty }) {
   const [tab, setTab] = useState('research')
   const [approvalId, setApprovalId] = useState(null)
-  async function approve(selection) {
-    const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, ...selection })
+  // Approval sends the ticked record ids per kind and the ticked Apollo finding keys.
+  async function approve(selection, apolloKeys) {
+    const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, ...selection, apollo_findings: apolloKeys })
     if (result) { setApprovalId(result.id); setTab('outputs') }
   }
+  const submit = (path, body) => mutate(`/${detail.id}/${path}`, body)
+  // Apollo changes the review token, which resets the research editor, so Apollo actions wait for saved edits.
+  const apolloBusy = busy || dirty || detail.status === 'researching'
+  const apollo = <>
+    <ApolloPanel detail={detail} busy={apolloBusy} submit={submit} />
+    {detail.apollo_configured && <ApolloContacts detail={detail} busy={apolloBusy} submit={submit} />}
+    {dirty && detail.apollo_configured && <p className="coverage">Save or discard research edits before using Apollo.</p>}
+    <ApolloContactRecords detail={detail} />
+  </>
   return <>
     <div className="workspace-heading"><div><small>FIRM WORKSPACE</small><h2>{detail.name}</h2><p>{detail.domain}</p></div>
       <span className="badge">{labels[detail.status]}</span></div>
@@ -110,7 +122,7 @@ function FirmWorkspace({ detail, busy, mutate, onDirty }) {
       <button id="outputs-tab" role="tab" aria-selected={tab === 'outputs'} aria-controls="outputs-panel" onClick={() => setTab('outputs')}>02 &nbsp; Create outputs</button>
     </div>
     <div id="research-panel" role="tabpanel" aria-labelledby="research-tab" hidden={tab !== 'research'}>
-      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} />
+      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} apollo={apollo} />
     </div>
     <div id="outputs-panel" role="tabpanel" aria-labelledby="outputs-tab" hidden={tab !== 'outputs'}>
       <OutputStudio detail={detail} busy={busy} mutate={mutate} approvalId={approvalId} onApproval={setApprovalId} />
@@ -147,16 +159,18 @@ function RecordField({ value, label, type, required, disabled, onChange }) {
   return <label>{label}{type === 'long' ? <textarea rows={3} maxLength={12000} {...props} /> : <input maxLength={320} {...props} />}</label>
 }
 
-function ResearchEditor({ detail, busy, mutate, approve, onDirty }) {
+function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
   const [name, setName] = useState(detail.name)
   const [logoId, setLogoId] = useState(detail.preferred_logo_id ?? '')
   const [records, setRecords] = useState(detail.records)
   const [selected, setSelected] = useState(() => allIds(detail.records))
+  const [apolloSelected, setApolloSelected] = useState((detail.apollo_findings || []).map(item => item.key))
   const [notice, setNotice] = useState('')
   const dirty = name !== detail.name || String(logoId) !== String(detail.preferred_logo_id ?? '') ||
     JSON.stringify(records) !== JSON.stringify(detail.records)
   const locked = busy || detail.status === 'researching'
   const total = countRecords(detail.records)
+  const count = countRecords(selected) + apolloSelected.length
   useEffect(() => { onDirty(dirty) }, [dirty, onDirty])
   useEffect(() => {
     function warn(e) { if (dirty) { e.preventDefault(); e.returnValue = '' } }
@@ -191,6 +205,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty }) {
     {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${total} records · ${detail.records.people.length} people`}</p>}
     {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
     {detail.error && <p role="alert">{detail.error}</p>}
+    {apollo}
     <form className="research-form" onSubmit={save}>
       <label>Firm display name<input required maxLength={160} value={name} disabled={locked} onChange={e => setName(e.target.value)} /></label>
       <div className="section-title"><h3>Firm branding</h3><small>Choose the preferred saved logo.</small></div>
@@ -226,8 +241,11 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty }) {
       <div className="review-actions"><button disabled={locked || !dirty}>Save research edits</button>
         <span role="status">{dirty ? 'Unsaved edits — save before approving or re-running research.' : 'All edits saved.'}</span></div>
     </form>
-    <div className="approval-bar"><div><strong>{countRecords(selected)} records selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
-      <button disabled={locked || dirty || !countRecords(selected)} onClick={() => approve(selected)}>Approve &amp; create outputs →</button></div>
+    {detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
+      <small>From Apollo's database, not the firm's website. Not editable; untick anything that looks wrong.</small></div>}
+    <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />
+    <div className="approval-bar"><div><strong>{count} {count === 1 ? 'item' : 'items'} selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
+      <button disabled={locked || dirty || !count} onClick={() => approve(selected, apolloSelected)}>Approve &amp; create outputs →</button></div>
   </>
 }
 
@@ -264,12 +282,14 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     {!detail.proposals.length ? <div className="empty-state">No approved brief yet. Review the records in Research, then choose “Approve &amp; create outputs”.</div> :
       <form className="output-form" onSubmit={generate}>
         <label>Approved brief<select value={selectedId} disabled={busy} onChange={e => onApproval(Number(e.target.value))}>
-          {detail.proposals.map(p => <option key={p.id} value={p.id}>Brief #{p.id} · {p.snapshot.firm} · {countRecords(p.snapshot)} records</option>)}</select></label>
+          {detail.proposals.map(p => <option key={p.id} value={p.id}>Brief #{p.id} · {p.snapshot.firm} · {countRecords(p.snapshot) + (p.snapshot.apollo?.length || 0)} items</option>)}</select></label>
         {olderApproval && <p className="coverage">This approval predates the current research or edits. To include the updated records, approve them in Research first.</p>}
-        {approval && <details><summary>Preview the approved data ({countRecords(approval.snapshot)} records)</summary>
+        {approval && <details><summary>Preview the approved data ({countRecords(approval.snapshot) + (approval.snapshot.apollo?.length || 0)} items)</summary>
           <p>Frozen snapshot for {approval.snapshot.firm}. Research edits do not change this approval.</p>
           {recordKinds.map(([kind, title]) => approval.snapshot[kind].length > 0 && <div key={kind}><strong>{title}</strong>
             <ul>{approval.snapshot[kind].map(r => <li key={r.id}>{recordLabel(kind, r)}</li>)}</ul></div>)}
+          {approval.snapshot.apollo?.length > 0 && <div><strong>Apollo</strong>
+            <ul>{approval.snapshot.apollo.map(item => <li key={item.key}>{item.category.replace('Apollo: ', '')}: {item.title}</li>)}</ul></div>}
           <a href={`${base}/${detail.id}/proposals/${approval.id}/demo-export`}>Download approved firm and staff JSON</a>
         </details>}
         <fieldset><legend>What should we create?</legend>{Object.entries(formatLabels).map(([format, label]) =>
@@ -297,4 +317,112 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     {detail.proposals.some(p => p.status === 'ready') && <details><summary>Earlier PowerPoint downloads</summary>
       {detail.proposals.filter(p => p.status === 'ready').map(p => <p key={p.id}><a href={`${base}/${detail.id}/proposals/${p.id}/download`}>Brief #{p.id} · PowerPoint</a></p>)}</details>}
   </>
+}
+
+function ApolloPanel({ detail, busy, submit }) {
+  const org = detail.apollo_org
+  if (!detail.apollo_configured) return <div className="apollo-panel"><h3>Apollo</h3>
+    <p>Apollo not configured. Add <code>APOLLO_API_KEY</code> to the server <code>.env</code> to enrich firms from Apollo.</p></div>
+  const tech = org?.technology_names?.length ? org.technology_names : (org?.current_technologies || []).map(t => t.name)
+  const industries = org?.industries?.length ? org.industries : [org?.industry].filter(Boolean)
+  return <div className="apollo-panel"><h3>Apollo</h3>
+    {org ? <>
+      <p>Enriched on {detail.apollo_enriched_at?.slice(0, 10)} · {org.name}</p>
+      <dl>
+        <dt>Headcount</dt><dd>{org.estimated_num_employees ?? 'Not listed'}</dd>
+        <dt>Industries</dt><dd>{industries.join(', ') || 'Not listed'}</dd>
+        <dt>Tech stack ({tech.length})</dt><dd>{tech.join(', ') || 'Not listed'}</dd>
+      </dl>
+      <button disabled={busy} onClick={() => submit('apollo/enrich', { refresh: true })}>Refresh enrichment (1 credit)</button>
+    </> : <>
+      <p>Look up this firm's headcount, industries and technology in Apollo. Uses 1 Apollo credit.</p>
+      <button disabled={busy} onClick={() => submit('apollo/enrich', {})}>Enrich firm (1 credit)</button>
+    </>}</div>
+}
+
+const defaultTitles = 'Managing Partner, Partner, Practice Manager, General Manager, Operations Manager, Finance Manager, CFO'
+
+function ApolloContact({ person }) {
+  return <>{person.apollo_email || 'No email found'}{person.email_status && ` (${person.email_status})`}
+    {person.linkedin_url && <> · <a href={person.linkedin_url} target="_blank" rel="noreferrer">LinkedIn ↗</a></>}
+    {person.match_confidence && <><br /><small>Match confidence: {person.match_confidence}</small></>}</>
+}
+
+function ApolloContacts({ detail, busy, submit }) {
+  const [titles, setTitles] = useState(defaultTitles)
+  const [seniorities, setSeniorities] = useState('')
+  const [result, setResult] = useState(null)
+  const [selected, setSelected] = useState([])
+  const [searching, setSearching] = useState(false)
+  const [error, setError] = useState('')
+  const revealed = new Set(detail.apollo_contacts.filter(c => c.apollo_email).map(c => c.apollo_id))
+  const picks = selected.filter(i => !revealed.has(i))
+  async function find(event) {
+    event.preventDefault()
+    setSearching(true); setError('')
+    const params = new URLSearchParams()
+    if (titles.trim()) params.append('titles', titles)
+    if (seniorities.trim()) params.append('seniorities', seniorities)
+    try { setResult(await request(`/${detail.id}/apollo/candidates?${params}`)); setSelected([]) }
+    catch (e) { setError(e.message) } finally { setSearching(false) }
+  }
+  const searchNote = result && (result.fallback
+    ? `No one matched those titles, so this list comes from a seniority search (${result.seniorities.join(', ')}).`
+    : `Found by ${result.search === 'titles' ? 'title' : result.search === 'seniorities' ? 'seniority' : 'title and seniority'} search.`)
+  return <div className="apollo-panel"><h3>Apollo contacts</h3>
+    <form className="apollo-search" onSubmit={find}>
+      <label>Job titles (comma-separated)<input value={titles} onChange={e => setTitles(e.target.value)} /></label>
+      <label>Seniorities (optional, e.g. owner, director)<input value={seniorities} onChange={e => setSeniorities(e.target.value)} /></label>
+      <button disabled={searching}>{searching ? 'Searching…' : 'Find people (free)'}</button>
+    </form>
+    <p>Searching is free and shows only first names. If no titles match, Apollo is searched by seniority instead.</p>
+    {error && <p role="alert">{error}</p>}
+    {result && <>
+      <p>{searchNote} {result.candidates.length} of {result.total} shown.</p>
+      {result.candidates.length > 0 && <ul className="candidate-list">{result.candidates.map(c => {
+        const done = revealed.has(c.apollo_id)
+        return <li key={c.apollo_id}><label className="choice">
+          <input type="checkbox" disabled={done} checked={done || picks.includes(c.apollo_id)}
+            onChange={e => setSelected(e.target.checked ? [...picks, c.apollo_id] : picks.filter(i => i !== c.apollo_id))} />
+          <span><strong>{[c.first_name, c.last_name_obfuscated].filter(Boolean).join(' ') || 'Unnamed'}</strong> · {c.title || 'No title'}
+            {' · '}{done ? 'Email saved' : c.has_email ? 'Apollo has an email' : 'Email unlikely'}</span></label></li>
+      })}</ul>}
+      {result.candidates.length > 0 && <button disabled={busy || !picks.length} onClick={() => submit('apollo/reveal', { ids: picks })}>
+        Reveal {picks.length} {picks.length === 1 ? 'email' : 'emails'} ({picks.length} {picks.length === 1 ? 'credit' : 'credits'})</button>}
+    </>}</div>
+}
+
+// Revealed Apollo contacts, kept apart from website research; each links to the website person with the same name.
+function ApolloContactRecords({ detail }) {
+  if (!detail.apollo_contacts?.length) return null
+  const people = Object.fromEntries(detail.records.people.map(p => [p.id, p]))
+  return <div><div className="section-title"><h3>Apollo contacts ({detail.apollo_contacts.length})</h3>
+    <small>Revealed in Apollo and saved for demo preparation. Re-running website research keeps them. These are not active Acctivity accounts.</small></div>
+    <div className="staff-table"><table><thead><tr><th>Name</th><th>Apollo title</th><th>Website profile</th><th>Apollo contact</th></tr></thead>
+      <tbody>{detail.apollo_contacts.map(contact => <tr key={contact.id}><td>{contact.full_name}</td><td>{contact.position || 'Not listed'}</td>
+        <td>{people[contact.person_id] ? `${people[contact.person_id].full_name} · ${people[contact.person_id].position || 'Position not published'}` : 'Not on the website'}</td>
+        <td><ApolloContact person={contact} /></td></tr>)}</tbody></table></div></div>
+}
+
+// Apollo findings: no website passage; each shows "Source: Apollo, retrieved <date>". Long lists (tech stack,
+// keywords) render as compact checkboxes with a per-group Select all / Clear all.
+function ApolloReview({ items, selected, setSelected }) {
+  const categories = [...new Set(items.map(item => item.category))]
+  return categories.map(category => {
+    const group = items.filter(item => item.category === category)
+    const keys = group.map(item => item.key)
+    const chosen = keys.filter(k => selected.includes(k)).length
+    const contacts = category === 'Apollo: contacts'
+    return <div key={category}><h3>{category} <small>({chosen} of {group.length} selected)</small></h3>
+      <p><small>{group[0].sources[0].title}. From Apollo's database, not the firm's website.
+        {category === 'Apollo: tech stack' && ' Apollo mostly reports web and IT tools (CDN, analytics, Microsoft 365), not practice-management software. Untick anything that looks wrong.'}</small>
+        {' '}<button type="button" onClick={() => setSelected(chosen < group.length ? [...new Set([...selected, ...keys])] : selected.filter(k => !keys.includes(k)))}>
+          {chosen < group.length ? 'Select all' : 'Clear all'}</button></p>
+      <ul className={contacts ? 'apollo-list' : 'apollo-list apollo-compact'}>{group.map(item => <li key={item.key}>
+        <label className="choice"><input type="checkbox" checked={selected.includes(item.key)}
+          onChange={e => setSelected(e.target.checked ? [...selected, item.key] : selected.filter(k => k !== item.key))} />
+          <span title={contacts ? undefined : item.text}>{contacts ? <><strong>{item.title}<br /></strong>{item.text}</> : item.title}</span></label>
+        {contacts && item.person?.linkedin_url && <div><a href={item.person.linkedin_url} target="_blank" rel="noreferrer">LinkedIn ↗</a></div>}
+      </li>)}</ul></div>
+  })
 }

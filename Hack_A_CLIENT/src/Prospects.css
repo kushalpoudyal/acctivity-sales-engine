@@ -36,3 +36,16 @@
 .prospects [role=alert]{padding:.9rem;background:#fff0d4;border-radius:7px;margin:1rem 0}.prospects .empty-state{padding:1.5rem;background:#f0f5f1;border-radius:8px;margin:1rem 0}
 .prospects [hidden]{display:none!important}
 @media(max-width:850px){.prospects .prospect-grid{grid-template-columns:1fr}.prospects .directory{position:static}.prospects .field-grid{grid-template-columns:1fr}.prospects{padding:1rem}.prospects .intake label{flex:1;min-width:180px}}
+/* Apollo (enrich, contacts, review groups, staff table and Find firms), ported from the Apollo stack. */
+.prospects .find-firms{padding:1.25rem;background:white;border:1px solid #d5dfd8;border-radius:12px;margin-bottom:1.5rem}
+.prospects .find-firms form{display:flex;align-items:end;gap:1rem;flex-wrap:wrap}.prospects .find-firms form label{flex:1;min-width:14rem}
+.prospects .staff-table{overflow:auto}.prospects table{width:100%;border-collapse:collapse;font-size:.85rem}
+.prospects th,.prospects td{padding:.5rem;text-align:left;border-bottom:1px solid #d5dfd8;vertical-align:top}
+.prospects .apollo-panel{margin:1rem 0;padding:1rem;background:#f3f7f4;border-radius:8px}
+.prospects .apollo-panel dl{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1rem;margin:0 0 1rem;font-size:.88rem}
+.prospects .apollo-panel dt{font-weight:600}.prospects .apollo-panel dd{margin:0;overflow-wrap:anywhere}
+.prospects .apollo-search{display:grid;gap:.5rem;margin:0 0 .5rem;padding:0;background:none}
+.prospects .candidate-list,.prospects .apollo-list{list-style:none;padding:0;margin:0 0 1rem}
+.prospects .apollo-list li{padding:1rem;background:#f5f8f5;border:1px solid #dce5dd;border-radius:9px}
+.prospects .apollo-compact{display:flex;flex-wrap:wrap;gap:.4rem}.prospects .apollo-compact li{margin:0;padding:.35rem .65rem}
+.prospects .apollo-compact .choice{margin:0}

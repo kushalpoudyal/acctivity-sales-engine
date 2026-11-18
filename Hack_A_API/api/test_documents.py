@@ -2,6 +2,8 @@ import io
 import re
 import unittest
 import zipfile
+from types import SimpleNamespace as Record
+from unittest.mock import patch
 
 from PIL import Image
 from pypdf import PdfReader
@@ -27,6 +29,19 @@ COPY = documents.SalesCopy(title="A calmer practice", subtitle="A proposal for d
                            pilot_steps=[POINT] * 4, next_steps=["Book a demo"] * 3,
                            welcome_intro="Thank you for your time.", demo_agenda=[POINT] * 3)
 
+
+
+def contact(key, name, position, email):
+    return {"key": key, "category": "Apollo: contacts", "title": name, "retrieved_at": "2026-11-18",
+            "person": {"full_name": name, "position": position, "apollo_email": email, "email_status": "verified",
+                       "linkedin_url": "https://linkedin.example/in/" + key, "match_confidence": "high"}}
+
+
+# Approved Apollo findings: one technology, a contact matching a website person and an Apollo-only contact.
+APOLLO_SNAPSHOT = {**SNAPSHOT, "apollo": [
+    {"key": "apollo:tech:xero", "category": "Apollo: tech stack", "title": "Xero", "retrieved_at": "2026-11-18"},
+    contact("ap-pat", "PAT PRINCIPAL", "Director", "pat@firm.example"),
+    contact("ap-ann", "Ann Apollo", "Practice Manager", "ann@firm.example")]}
 
 def webp_logo() -> bytes:
     buffer = io.BytesIO()
@@ -69,3 +84,23 @@ class TemplateTests(unittest.TestCase):
 
     def test_most_senior_people_come_first(self):
         self.assertEqual([p["full_name"] for p in documents.key_people(SNAPSHOT, 2)], ["Pat Principal", "Sam Solicitor"])
+
+    def test_word_document_adds_approved_apollo_contacts_and_reported_data(self):
+        archive = zipfile.ZipFile(io.BytesIO(documents.render_docx(APOLLO_SNAPSHOT, COPY, None)))
+        body = archive.read("word/document.xml").decode()
+        self.assertIn("pat@firm.example (Apollo)", body)
+        self.assertEqual((body.count("Pat Principal"), body.count("PAT PRINCIPAL")), (1, 0))
+        self.assertIn("Ann Apollo", body)
+        self.assertIn("Reported by Apollo", body)
+        self.assertIn("Xero", body)
+
+    def test_copy_call_gets_apollo_names_but_no_emails_or_links(self):
+        with patch("documents.openai.OpenAI") as factory:
+            client = factory.return_value.__enter__.return_value
+            client.responses.parse.return_value = Record(status="completed", output_parsed=COPY)
+            documents.write_copy(APOLLO_SNAPSHOT, "")
+        sent = client.responses.parse.call_args.kwargs["input"]
+        self.assertIn("Xero", sent)
+        self.assertIn("Ann Apollo", sent)
+        self.assertNotIn("@firm.example", sent)
+        self.assertNotIn("linkedin", sent)
