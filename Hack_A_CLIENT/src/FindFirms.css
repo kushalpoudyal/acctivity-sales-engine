@@ -1,0 +1,9 @@
+.prospects .find-firms{margin-bottom:1rem}
+.prospects .find-firms form{padding:0;border:0;margin:1rem 0}
+.prospects .find-firms form input{min-width:14rem}
+.prospects .find-firms-note{padding:.8rem;background:#f3f7f4;border-radius:8px;font-size:.88rem}
+.prospects .find-firms-table{overflow:auto;margin-bottom:1rem}
+.prospects .find-firms-table td input{width:auto}
+.prospects .find-firms-table tr.muted{opacity:.55}
+.prospects .find-firms-table tr.doubtful td{background:#fff0d4}
+.prospects .find-firms-table a{color:#12534a;text-decoration:underline}
