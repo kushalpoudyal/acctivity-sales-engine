@@ -10,3 +10,5 @@
 - 2026-11-18 · Context moved into the repo (context/) so the whole team shares it; CLAUDE.md tells every Claude session to read CONTEXT.md and log here. (Kushal)
 - 2026-11-18 · Agent skills set up: issues tracked in GitHub Issues (gh CLI), default triage labels, single-context domain docs → docs/agents/. 4 triage labels still to create (needs Write access). (Cody)
 - 2026-11-18 · Triage labels needs-triage/needs-info/ready-for-agent/ready-for-human created on GitHub (wontfix already existed). (Cody)
+- 2026-11-18 · Cody Marcus (GitHub codymarcus) invited as collaborator with write access. (Kushal)
+- 2026-11-18 · Hessam Imen (GitHub hessamimen) invited as collaborator with write access. (Kushal)
