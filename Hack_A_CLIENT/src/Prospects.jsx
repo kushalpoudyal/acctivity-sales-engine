@@ -219,6 +219,8 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
   const count = countRecords(selected) + apolloSelected.length + webSelected.length
   const [webSearch, setWebSearch] = useState(true)
   const [reputation, setReputation] = useState(true)
+  // Apollo enrichment spends a credit, so it starts unticked.
+  const [enrichApollo, setEnrichApollo] = useState(false)
   useEffect(() => { onDirty(dirty) }, [dirty, onDirty])
   useEffect(() => {
     function warn(e) { if (dirty) { e.preventDefault(); e.returnValue = '' } }
@@ -244,15 +246,18 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
     const result = await mutate(`/${detail.id}/research`, reusePages
       ? { reuse_pages: true, web_search: false, reputation: false } : { web_search: webSearch, reputation })
     if (result) setNotice(reusePages ? 'Re-extraction started. Records will update here.' : 'Research started. Page coverage and results will update here.')
+    // Enrich after research has started, so an Apollo error stays on screen and never blocks research.
+    if (result && !reusePages && enrichApollo && detail.apollo_configured) await mutate(`/${detail.id}/apollo/enrich`, { refresh: Boolean(detail.apollo_org) })
   }
   return <>
     <div className="research-toolbar"><div><h3>Research sources</h3><p>Read up to 12 priority website pages. Enabled OpenAI searches run alongside the crawl; each source adds paid usage.</p>
       <label className="choice"><input type="checkbox" checked disabled /> Website crawl and record extraction</label>
       <label className="choice"><input type="checkbox" checked={webSearch} disabled={locked} onChange={e => setWebSearch(e.target.checked)} /> OpenAI wider web search</label>
-      <label className="choice"><input type="checkbox" checked={reputation} disabled={locked} onChange={e => setReputation(e.target.checked)} /> Public reputation search (not a verified Google review sample)</label></div>
+      <label className="choice"><input type="checkbox" checked={reputation} disabled={locked} onChange={e => setReputation(e.target.checked)} /> Public reputation search (not a verified Google review sample)</label>
+      <label className="choice"><input type="checkbox" checked={enrichApollo} disabled={locked || !detail.apollo_configured} onChange={e => setEnrichApollo(e.target.checked)} /> Enrich with Apollo (1 credit){!detail.apollo_configured && ' · Apollo not configured'}</label></div>
       <div className="toolbar-actions">
         {detail.pages_saved > 0 && <button type="button" className="secondary" disabled={locked || dirty} onClick={() => runResearch(true)}>Re-extract from {detail.pages_saved} saved pages</button>}
-        <button type="button" disabled={locked || dirty} onClick={() => runResearch(false)}>{detail.status === 'researching' ? 'Researching…' : 'Run website research'}</button></div></div>
+        <button type="button" disabled={locked || dirty} onClick={() => runResearch(false)}>{detail.status === 'researching' ? 'Researching…' : 'Run research'}</button></div></div>
     {notice && detail.status === 'researching' && <p role="status">{notice}</p>}
     {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.status !== 'researching' && 'Last run: '}{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${total} records · ${detail.records.people.length} people · ${detail.web_findings?.length || 0} web findings`}</p>}
     {detail.research_meta?.sources && <ResearchProgress meta={detail.research_meta} active={detail.status === 'researching'} lastPollAt={lastPollAt} />}
@@ -269,7 +274,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
         <a href={`${base}/${detail.id}/brand-assets/${asset.id}`} download>Download logo</a></label>)}</div>
       {!detail.brand_assets.length && <p>No logo saved. Research will try to collect a published website logo.</p>}
       <div className="section-title"><h3>Review and edit research records</h3><small>Each record keeps its source page. Your corrections are labelled as rep edits.</small></div>
-      {!total && <p>Run website research to populate the firm's practice areas, people, offices and facts.</p>}
+      {!total && <p>Run research to populate the firm's practice areas, people, offices and facts.</p>}
       {total > 0 && recordKinds.map(([kind, title]) => <details key={kind} className="record-category"><summary><h3 className="category-heading">{title} <span className="badge">{records[kind].length}</span></h3></summary>
         {!records[kind].length && <p className="muted">None found on the website.</p>}
         <div className="finding-list">{records[kind].map(record => <article className="finding-card" key={record.id}>

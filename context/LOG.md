@@ -49,3 +49,4 @@
 - 2026-11-19 · First personalised video rendered end to end (CBD Law, run 3, ~2.5 min) on the original campaign. Switched the local SENDSPARK_DYNAMIC_ID to the new campaign "Stalktivity Demo" (adjusted 52.5 s video, presenter "Zhou", firm name at 1.0 s greeting, 28.7 s and 50.8 s) and restarted the API. (Kushal + Claude)
 - 2026-11-19 · Prospects UI: research record categories (Practice areas, People, Offices, Firm facts) are now collapsible, collapsed by default (Hessam)
 - 2026-11-19 · Prospects UI: Find firms (Apollo search) section hidden behind SHOW_FIND_FIRMS = false in Prospects.jsx (Hessam)
+- 2026-11-19 · Prospects UI: 'Enrich with Apollo (1 credit)' checkbox added to Research sources (unticked by default); Run research then calls apollo/enrich (refresh if already enriched). Re-extract never enriches. Button renamed from "Run website research" to "Run research". (Hessam)
