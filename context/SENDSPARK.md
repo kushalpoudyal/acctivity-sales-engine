@@ -1,8 +1,28 @@
-# Sendspark: candidate for the "videos" output
+# Sendspark: the "videos" output
 
 Researched 18/11 (Kushal asked whether our server could
 integrate with https://www.sendspark.com/video-platform/ai-intros to customise videos).
-Nothing built or tested yet; everything below is from Sendspark's docs.
+Sections below "Our setup" are from Sendspark's docs.
+
+## Our setup (19/11)
+
+- **Template video:** `Hack_A_API/api/brand/video/acctivity-demo-short.mp4` (50.9 s, 1080p). No face; an AI
+  voiceover ("Shu, the AI advisory lawyer at Acctivity") over prospect details. Also uploaded to the Sendspark library.
+- **Campaign:** dynamic campaign "Stalktivity" in workspace "Docorto". Created in the Sendspark app (the API can't
+  upload or attach a video). The API sees Sendspark's 35-segment transcript of the voiceover; the firm name fits
+  "for your firm." (27.1 s) and "your firm is missing" (43.3 s). Turning those into variables, turning multivariable on,
+  turning the website background off (no face) and setting the landing-page title are done in the Sendspark app.
+- **Built (branch `sendspark-ai-video`):** "Personalised AI video" option in Create outputs → `sendspark.py` adds the
+  firm (approved name as `contactName` + `company`, website as `backgroundUrl`, `processAndAuthorizeCharge: true`:
+  with `false` Sendspark only saves the prospect, status stays `saved`, nothing renders),
+  polls `GET .../prospects/{email}` every 15 s for up to 15 min, saves `shareUrl` on the run. Details in
+  `Hack_A_API/api/README.md`.
+- **Settings** (`Hack_A_API/api/.env`): `SENDSPARK_API_KEY`, `SENDSPARK_API_SECRET_KEY`, `SENDSPARK_WORKSPACE_ID`,
+  `SENDSPARK_DYNAMIC_ID`, `SENDSPARK_PROSPECT_EMAIL` (team inbox; one plus-address per firm, since Sendspark keys
+  prospects by email).
+- **API behaviour seen live:** key + secret both required (key alone → 401 "Invalid token"); list campaigns 500s with
+  `offset=0`, works without paging params; responses are wrapped as `{"response": {"data": ...}}`.
+  Prospect `status`: saved, billed, processing, uploaded, completed, errored.
 
 ## Verdict from that session
 

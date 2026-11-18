@@ -5,7 +5,8 @@ import FindFirms from './FindFirms'
 
 const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
-const formatLabels = { pptx: 'PowerPoint proposal', docx: 'Word proposal', pdf: 'Welcome PDF' }
+const formatLabels = { pptx: 'PowerPoint proposal', docx: 'Word proposal', pdf: 'Welcome PDF', video: 'Personalised AI video' }
+const formatHints = { pptx: '.pptx · Editable sales material', docx: '.docx · Editable sales material', pdf: '.pdf · Prospective demo welcome guide', video: 'Sendspark · the AI voice says the firm name' }
 const sourceLabels = { website: 'Website crawl', website_crawl: 'Website crawl', web_search: 'OpenAI web search', reputation: 'Public reputation search', reputation_search: 'Public reputation search' }
 
 async function request(path = '', options) {
@@ -409,14 +410,16 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
           <a href={`${base}/${detail.id}/proposals/${approval.id}/demo-export`}>Download approved firm and staff JSON</a>
         </details>}
         <fieldset><legend>What should we create?</legend>{Object.entries(formatLabels).map(([format, label]) =>
-          <label className="format-option" key={format}><input type="checkbox" checked={formats.includes(format)} disabled={busy}
+          <label className="format-option" key={format}><input type="checkbox" checked={formats.includes(format)}
+            disabled={busy || (format === 'video' && !detail.sendspark_configured)}
             onChange={e => setFormats(e.target.checked ? [...formats, format] : formats.filter(f => f !== format))} />
-            <span><strong>{label}</strong><small>.{format} · {format === 'pdf' ? 'Prospective demo welcome guide' : 'Editable sales material'}</small></span></label>)}</fieldset>
+            <span><strong>{label}</strong><small>{format === 'video' && !detail.sendspark_configured ? 'Sendspark is not configured on the server' : formatHints[format]}</small></span></label>)}</fieldset>
         <label>Branding for this run<select value={logo} disabled={busy} onChange={e => setLogo(e.target.value)}>
           <option value="">No firm logo</option>{detail.brand_assets.map(asset => <option key={asset.id} value={asset.id}>Saved firm logo #{asset.id}</option>)}</select></label>
         <label>Sales instructions<textarea maxLength={6000} rows={5} value={instructions} disabled={busy} onChange={e => setInstructions(e.target.value)}
           placeholder="Who is the audience? What should we demonstrate? e.g. Prepare a partner-level discussion focused on family law and a proposed pilot. Do not invent pricing." /></label>
         <p className="muted">This sends the approved records to OpenAI to write the copy; the logo stays with our templates. Each generation makes one paid API call. No emails or invitations are sent.</p>
+        {formats.includes('video') && <p className="muted">The video sends only the firm name and website to Sendspark and uses Sendspark video minutes (beyond the plan's allowance, Sendspark charges). Rendering can take several minutes.</p>}
         <button disabled={busy || running || !formats.length || !approval}>{running ? 'Generation in progress…' : 'Generate selected outputs'}</button>
       </form>}
     {notice && <p role="status">{notice}</p>}
@@ -426,7 +429,8 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
       <p>{job.stage} · {job.created_at} UTC</p>{job.error && <p role="alert">{job.error}</p>}
       {job.instructions && <details><summary>Sales instructions</summary><p>{job.instructions}</p></details>}
       <ul className="file-list">{job.files.map(file => <li key={file.id}><strong>{formatLabels[file.format]}</strong>
-        {file.status === 'ready' ? <a href={`${base}/${detail.id}/outputs/${job.id}/files/${file.id}`}>Download .{file.format} · {Math.ceil(file.size / 1024)} KB</a>
+        {file.status === 'ready' && file.url ? <a href={file.url} target="_blank" rel="noreferrer">Watch video ↗</a>
+          : file.status === 'ready' ? <a href={`${base}/${detail.id}/outputs/${job.id}/files/${file.id}`}>Download .{file.format} · {Math.ceil(file.size / 1024)} KB</a>
           : <span>{file.error || file.stage || file.status}</span>}
         {file.started_at && <small className="file-progress">{elapsed(file)} elapsed
           {file.status === 'running' && file.updated_at && ` · Last activity ${Math.max(0, Math.floor((now - Date.parse(file.updated_at)) / 1000))}s ago`}</small>}

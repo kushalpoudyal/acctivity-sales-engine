@@ -126,10 +126,25 @@ SIL Open Font License fonts (`brand/fonts/*-OFL.txt`). Images are 1600px JPEG co
 of the brand pack. The older `POST .../proposals/{id}/build` endpoint uses the same
 PowerPoint template.
 
+### Personalised AI video (Sendspark)
+
+Tick **Personalised AI video** in Create outputs (`"video"` in `formats`). `sendspark.py` adds the
+firm to the Sendspark dynamic campaign `SENDSPARK_DYNAMIC_ID` with the approved firm name as both
+`contactName` and `company`, the firm website as `backgroundUrl`, and `processAndAuthorizeCharge: true`
+(Sendspark only renders with it; `false` just saves the prospect, and it also accepts charges beyond
+the plan's allowance). It then polls the prospect (free) every 15 s, for up to 15 minutes, until
+Sendspark reports `completed`, and saves the share link on the run (`url`; there is no file to
+download). Only the firm name and website go to Sendspark. Each video uses Sendspark video minutes.
+
+The base video and the variables the AI voice speaks are set up once in the Sendspark app; the API
+cannot upload or edit them. Sendspark identifies prospects by email, so each firm gets a
+plus-address on `SENDSPARK_PROSPECT_EMAIL` (e.g. `sales+cbdlaw-com-au@...`). The option is disabled
+until all five `SENDSPARK_*` settings are in `.env`. A video-only run makes no OpenAI call.
+
 ### Focused checks
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents test_apollo test_find_firms test_apollo_contacts test_apollo_findings test_web_research test_model_stream
+.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents test_apollo test_find_firms test_apollo_contacts test_apollo_findings test_web_research test_model_stream test_sendspark
 ```
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
 The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`
