@@ -1,26 +1,35 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './Prospects.css'
+import logo from './assets/logo.png'
 import FindFirms from './FindFirms'
 
 const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
 const formatLabels = { pptx: 'PowerPoint proposal', docx: 'Word proposal', pdf: 'Welcome PDF' }
+const sourceLabels = { website: 'Website crawl', website_crawl: 'Website crawl', web_search: 'OpenAI web search', reputation: 'Public reputation search', reputation_search: 'Public reputation search' }
 
 async function request(path = '', options) {
-  const res = await fetch(base + path, options)
-  if (!res.headers.get('content-type')?.includes('application/json')) {
-    throw new Error('Cannot reach the firms API. Check the FastAPI server on port 9001.')
-  }
-  const result = await res.json()
-  if (!res.ok) {
-    const message = Array.isArray(result.detail) ? result.detail.map(e => e.msg).join('; ') : result.detail
-    throw new Error(typeof message === 'string' ? message : `Request failed (${res.status}).`)
-  }
-  if (/^\/\d+$/.test(path) && (!Array.isArray(result.outputs) || !result.records ||
-      !Array.isArray(result.proposals) || result.proposals.some(p => !p.snapshot))) {
-    throw new Error('The API is running an older workspace version. Restart FastAPI on port 9001, then refresh.')
-  }
-  return result
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15000)
+  try {
+    const res = await fetch(base + path, { ...options, signal: controller.signal })
+    if (!res.headers.get('content-type')?.includes('application/json')) {
+      throw new Error('Cannot reach the firms API. Check the FastAPI server on port 9001.')
+    }
+    const result = await res.json()
+    if (!res.ok) {
+      const message = Array.isArray(result.detail) ? result.detail.map(e => e.msg).join('; ') : result.detail
+      throw new Error(typeof message === 'string' ? message : `Request failed (${res.status}).`)
+    }
+    if (/^\/\d+$/.test(path) && (!Array.isArray(result.outputs) || !result.records ||
+        !Array.isArray(result.proposals) || result.proposals.some(p => !p.snapshot))) {
+      throw new Error('The API is running an older workspace version. Restart FastAPI on port 9001, then refresh.')
+    }
+    return result
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The API did not respond within 15 seconds. The background job may still be running; refresh to reconnect, rather than starting another paid run.')
+    throw error
+  } finally { clearTimeout(timer) }
 }
 
 export default function Prospects() {
@@ -35,7 +44,30 @@ export default function Prospects() {
   const [dirty, setDirty] = useState(false)
   const [version, refresh] = useState(0)
   const [query, search] = useState('')
+  const [lastPollAt, setLastPollAt] = useState(null)
+  const [liveState, setLiveState] = useState('connecting')
   const reload = useCallback(() => refresh(v => v + 1), [])
+  useEffect(() => {
+    if (!id) return
+    let active = true
+    const stream = new EventSource(`${base}/${id}/events`)
+    stream.onopen = () => { if (active) setLiveState('live') }
+    stream.onmessage = event => {
+      try {
+        const firm = JSON.parse(event.data)
+        if (active && firm.id === id) {
+          setDetail(firm); setLastPollAt(Date.now())
+          setFirms(rows => rows.map(row => row.id === id ? { ...row, name: firm.name, status: firm.status } : row))
+        }
+      } catch {
+        if (active) setError('Live updates could not be read. Periodic polling is still available; refresh to reconnect.')
+        stream.close()
+      }
+    }
+    stream.addEventListener('heartbeat', () => { if (active) setLastPollAt(Date.now()) })
+    stream.onerror = () => { if (active) setLiveState('reconnecting') }
+    return () => { active = false; stream.close() }
+  }, [id])
   useEffect(() => {
     let active = true
     let timer
@@ -43,7 +75,7 @@ export default function Prospects() {
       try {
         const [rows, selected] = await Promise.all([request(), id ? request('/' + id) : null])
         if (!active) return
-        setFirms(rows); setDetail(selected)
+        setFirms(rows); setDetail(selected); setLastPollAt(Date.now())
         if (rows.some(row => row.status === 'researching') ||
             selected?.proposals.some(p => p.status === 'building') ||
             selected?.outputs?.some(job => ['queued', 'running'].includes(job.status))) {
@@ -79,8 +111,11 @@ export default function Prospects() {
     }
   }
   const matches = firms.filter(f => (f.name + ' ' + f.domain).toLowerCase().includes(query.toLowerCase()))
-  return <main className="prospects">
-    <header className="directory-header"><small>ACCTIVITY.AI / INSTANT SALES ENGINE</small><h1>Prospect workspace</h1>
+  return <div className="prospects-page">
+  <main className="prospects">
+    <header className="directory-header">
+      <a className="app-brand" href="/prospects"><img src={logo} alt="" width="28" height="28" /><span>Stalktivity</span></a>
+      <h1>Prospect workspace</h1>
       <p>Research the firm. Review its people. Build a sales pack that feels personal.</p></header>
     <form className="intake" onSubmit={add}><h2>Add a firm</h2><label>Firm website<input name="website" required maxLength={2048} placeholder="firm.com.au" /></label>
       <label>Display name (optional)<input name="display_name" maxLength={160} /></label><button disabled={busy}>Save firm</button></form>
@@ -89,20 +124,22 @@ export default function Prospects() {
     <div className="prospect-grid"><aside className="directory"><h2>Firms <span className="badge">{firms.length}</span></h2>
       <label>Filter directory<input value={query} onChange={e => search(e.target.value)} placeholder="Name or website" /></label>
       {matches.map(f => <button disabled={busy} className="firm-row" aria-pressed={id === f.id} key={f.id} onClick={() => chooseFirm(f.id)}>
-        <strong>{f.name}</strong><span>{f.domain}</span><small>{labels[f.status]}</small></button>)}
+        <strong>{f.name}</strong><span>{f.domain}</span><small data-status={f.status}>{labels[f.status]}</small></button>)}
       {!matches.length && <p>{firms.length ? 'No matching firms.' : 'No firms saved yet.'}</p>}</aside>
     <section className="workspace">{detail && detail.id === id
-      ? <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} />
+      ? <><p className="connection-status" role="status">{liveState === 'live' ? 'Live updates connected' : 'Live updates reconnecting · periodic polling available'}</p>
+        <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} lastPollAt={lastPollAt} /></>
       : <><h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></>}</section></div>
   </main>
+  </div>
 }
 
-function FirmWorkspace({ detail, busy, dirty, mutate, onDirty }) {
+function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt }) {
   const [tab, setTab] = useState('research')
   const [approvalId, setApprovalId] = useState(null)
-  // Approval sends the ticked record ids per kind and the ticked Apollo finding keys.
-  async function approve(selection, apolloKeys) {
-    const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, ...selection, apollo_findings: apolloKeys })
+  // Approval sends the ticked record ids per kind, Apollo finding keys and web finding ids.
+  async function approve(selection, apolloKeys, webIds) {
+    const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, ...selection, apollo_findings: apolloKeys, web_findings: webIds })
     if (result) { setApprovalId(result.id); setTab('outputs') }
   }
   const submit = (path, body) => mutate(`/${detail.id}/${path}`, body)
@@ -116,13 +153,13 @@ function FirmWorkspace({ detail, busy, dirty, mutate, onDirty }) {
   </>
   return <>
     <div className="workspace-heading"><div><small>FIRM WORKSPACE</small><h2>{detail.name}</h2><p>{detail.domain}</p></div>
-      <span className="badge">{labels[detail.status]}</span></div>
+      <span className="badge" data-status={detail.status}>{labels[detail.status]}</span></div>
     <div className="workspace-tabs" role="tablist" aria-label="Firm workspace">
       <button id="research-tab" role="tab" aria-selected={tab === 'research'} aria-controls="research-panel" onClick={() => setTab('research')}>01 &nbsp; Research</button>
       <button id="outputs-tab" role="tab" aria-selected={tab === 'outputs'} aria-controls="outputs-panel" onClick={() => setTab('outputs')}>02 &nbsp; Create outputs</button>
     </div>
     <div id="research-panel" role="tabpanel" aria-labelledby="research-tab" hidden={tab !== 'research'}>
-      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} apollo={apollo} />
+      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} apollo={apollo} lastPollAt={lastPollAt} />
     </div>
     <div id="outputs-panel" role="tabpanel" aria-labelledby="outputs-tab" hidden={tab !== 'outputs'}>
       <OutputStudio detail={detail} busy={busy} mutate={mutate} approvalId={approvalId} onApproval={setApprovalId} />
@@ -142,6 +179,7 @@ const recordFields = {
 }
 const allIds = records => Object.fromEntries(recordKinds.map(([kind]) => [kind, records[kind].map(r => r.id)]))
 const countRecords = records => recordKinds.reduce((n, [kind]) => n + records[kind].length, 0)
+const snapshotCount = s => countRecords(s) + (s.apollo?.length || 0) + (s.web?.length || 0)
 function recordLabel(kind, r) {
   if (kind === 'people') return `${r.full_name} · ${r.position || 'Position not published'}`
   return kind === 'facts' ? `${factKinds[r.kind]}: ${r.title}` : r.name
@@ -159,7 +197,7 @@ function RecordField({ value, label, type, required, disabled, onChange }) {
   return <label>{label}{type === 'long' ? <textarea rows={3} maxLength={12000} {...props} /> : <input maxLength={320} {...props} />}</label>
 }
 
-function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
+function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPollAt }) {
   const [name, setName] = useState(detail.name)
   const [logoId, setLogoId] = useState(detail.preferred_logo_id ?? '')
   const [records, setRecords] = useState(detail.records)
@@ -170,7 +208,11 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
     JSON.stringify(records) !== JSON.stringify(detail.records)
   const locked = busy || detail.status === 'researching'
   const total = countRecords(detail.records)
-  const count = countRecords(selected) + apolloSelected.length
+  // Reputation observations are unverified, so they start unticked.
+  const [webSelected, setWebSelected] = useState((detail.web_findings || []).filter(f => f.kind !== 'reputation_search').map(f => f.id))
+  const count = countRecords(selected) + apolloSelected.length + webSelected.length
+  const [webSearch, setWebSearch] = useState(true)
+  const [reputation, setReputation] = useState(true)
   useEffect(() => { onDirty(dirty) }, [dirty, onDirty])
   useEffect(() => {
     function warn(e) { if (dirty) { e.preventDefault(); e.returnValue = '' } }
@@ -193,16 +235,21 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
       ? `Re-extract from the ${detail.pages_saved} saved pages? This paid run replaces current records without re-reading the website. Approved briefs stay unchanged.`
       : 'Re-read the website? This paid run replaces current research records. Approved briefs stay unchanged.'
     if (total && !window.confirm(message)) return
-    const result = await mutate(`/${detail.id}/research`, { reuse_pages: reusePages })
+    const result = await mutate(`/${detail.id}/research`, reusePages
+      ? { reuse_pages: true, web_search: false, reputation: false } : { web_search: webSearch, reputation })
     if (result) setNotice(reusePages ? 'Re-extraction started. Records will update here.' : 'Research started. Page coverage and results will update here.')
   }
   return <>
-    <div className="research-toolbar"><div><h3>Website research</h3><p>Read public team profiles, services and contact pages. Each run may incur charges.</p></div>
+    <div className="research-toolbar"><div><h3>Research sources</h3><p>Read up to 12 priority website pages. Enabled OpenAI searches run alongside the crawl; each source adds paid usage.</p>
+      <label className="choice"><input type="checkbox" checked disabled /> Website crawl and record extraction</label>
+      <label className="choice"><input type="checkbox" checked={webSearch} disabled={locked} onChange={e => setWebSearch(e.target.checked)} /> OpenAI wider web search</label>
+      <label className="choice"><input type="checkbox" checked={reputation} disabled={locked} onChange={e => setReputation(e.target.checked)} /> Public reputation search (not a verified Google review sample)</label></div>
       <div className="toolbar-actions">
         {detail.pages_saved > 0 && <button type="button" className="secondary" disabled={locked || dirty} onClick={() => runResearch(true)}>Re-extract from {detail.pages_saved} saved pages</button>}
         <button type="button" disabled={locked || dirty} onClick={() => runResearch(false)}>{detail.status === 'researching' ? 'Researching…' : 'Run website research'}</button></div></div>
-    {notice && <p role="status">{notice}</p>}
-    {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${total} records · ${detail.records.people.length} people`}</p>}
+    {notice && detail.status === 'researching' && <p role="status">{notice}</p>}
+    {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.status !== 'researching' && 'Last run: '}{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${total} records · ${detail.records.people.length} people · ${detail.web_findings?.length || 0} web findings`}</p>}
+    {detail.research_meta?.sources && <ResearchProgress meta={detail.research_meta} active={detail.status === 'researching'} lastPollAt={lastPollAt} />}
     {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
     {detail.error && <p role="alert">{detail.error}</p>}
     {apollo}
@@ -241,12 +288,68 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
       <div className="review-actions"><button disabled={locked || !dirty}>Save research edits</button>
         <span role="status">{dirty ? 'Unsaved edits — save before approving or re-running research.' : 'All edits saved.'}</span></div>
     </form>
+    {detail.web_findings?.length > 0 && <div className="section-title"><h3>Review web findings</h3>
+      <small>Cited from public sources other than the firm's website. Not editable; reputation observations start unticked.</small></div>}
+    <WebReview items={detail.web_findings || []} selected={webSelected} setSelected={setWebSelected} />
     {detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
       <small>From Apollo's database, not the firm's website. Not editable; untick anything that looks wrong.</small></div>}
     <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />
     <div className="approval-bar"><div><strong>{count} {count === 1 ? 'item' : 'items'} selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
-      <button disabled={locked || dirty || !count} onClick={() => approve(selected, apolloSelected)}>Approve &amp; create outputs →</button></div>
+      <button disabled={locked || dirty || !count} onClick={() => approve(selected, apolloSelected, webSelected)}>Approve &amp; create outputs →</button></div>
   </>
+}
+
+function ResearchProgress({ meta, active, lastPollAt }) {
+  const running = active && !meta.finished_at
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [running])
+  function duration(start, end) {
+    const seconds = Math.max(0, Math.floor(((end ? Date.parse(end) : now) - Date.parse(start)) / 1000))
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+  }
+  return <div>
+    {running ? <p className="coverage">{meta.started_at && `Elapsed ${duration(meta.started_at)} · `}
+      {lastPollAt && `API last responded ${Math.max(0, Math.floor((now - lastPollAt) / 1000))}s ago`}
+      {meta.updated_at && ` · Last progress ${duration(meta.updated_at)} ago`}</p> :
+      <p className="coverage">{meta.finished_at ? 'Research finished' : 'Research stopped'}
+        {meta.started_at && (meta.finished_at || meta.updated_at) && ` · ${meta.finished_at ? 'Total duration' : 'Last recorded duration'} ${duration(meta.started_at, meta.finished_at || meta.updated_at)}`}
+        {meta.finished_at && <> · Finished <time dateTime={meta.finished_at}>{new Date(meta.finished_at).toLocaleString()}</time></>}</p>}
+    <div className="source-status" aria-live="polite">{Object.entries(meta.sources).map(([source, result]) => {
+      const sourceRunning = running && result.status === 'running'
+      const status = !running && result.status === 'running' ? 'interrupted' : result.status
+      return (
+      <div key={source}><strong>{sourceLabels[source]}</strong>
+        <span>{sourceRunning ? result.stage || status : status}{result.findings != null && ` · ${result.findings} findings`}</span>
+        {result.started_at && (sourceRunning || result.finished_at || meta.finished_at || meta.updated_at) &&
+          <small>{sourceRunning ? 'Elapsed' : 'Duration'} {duration(result.started_at, result.finished_at || (!sourceRunning ? meta.finished_at || meta.updated_at : undefined))}</small>}
+        {result.characters_received > 0 && <small> · {result.characters_received.toLocaleString()} response characters received</small>}
+        {result.error && <p>{result.error}</p>}
+        {sourceRunning && result.preview && <details open><summary>Live draft — not yet verified</summary><pre className="stream-preview">{result.preview}</pre></details>}
+        {result.findings_preview?.length > 0 && <details><summary>Read sourced results now</summary>
+          {result.findings_preview.map((finding, i) => <div key={i}><p>{finding.text}</p>
+            {finding.sources.map(s => <a href={s.url} key={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div>)}</details>}
+      </div>)})}</div>
+    {running && <small>Page reading, model extraction and logo retrieval are separate steps. An old progress timestamp does not prove a timeout; provider timeouts are reported explicitly per source.</small>}
+  </div>
+}
+
+// Web findings: cited observations from other public sites. Reputation ones are unverified signals.
+function WebReview({ items, selected, setSelected }) {
+  return ['web_search', 'reputation_search'].map(kind => {
+    const group = items.filter(item => item.kind === kind)
+    if (!group.length) return null
+    return <div key={kind}><h3>{sourceLabels[kind]} <small>({group.filter(item => selected.includes(item.id)).length} of {group.length} selected)</small></h3>
+      {kind === 'reputation_search' && <p className="reputation-note">Unverified public reputation signals, not a Google review sample or established firm facts. Review before including in sales material.</p>}
+      <ul className="apollo-list">{group.map(item => <li key={item.id}><label className="choice">
+        <input type="checkbox" checked={selected.includes(item.id)}
+          onChange={e => setSelected(e.target.checked ? [...selected, item.id] : selected.filter(n => n !== item.id))} />
+        <span>{item.text}</span></label>
+        <div className="source-links">{item.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div></li>)}</ul></div>
+  })
 }
 
 function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
@@ -260,6 +363,17 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
   const approval = detail.proposals.find(p => p.id === Number(selectedId))
   const olderApproval = approval && approval.snapshot.brief_token !== detail.brief_token
   const running = detail.outputs.some(job => ['queued', 'running'].includes(job.status))
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [running])
+  function elapsed(file) {
+    if (!file.started_at) return ''
+    const seconds = Math.max(0, Math.floor(((file.finished_at ? Date.parse(file.finished_at) : now) - Date.parse(file.started_at)) / 1000))
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+  }
   async function generate(event) {
     event.preventDefault()
     const body = { approval_id: Number(selectedId), formats, instructions, logo_id: logo === '' ? null : Number(logo) }
@@ -282,14 +396,16 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     {!detail.proposals.length ? <div className="empty-state">No approved brief yet. Review the records in Research, then choose “Approve &amp; create outputs”.</div> :
       <form className="output-form" onSubmit={generate}>
         <label>Approved brief<select value={selectedId} disabled={busy} onChange={e => onApproval(Number(e.target.value))}>
-          {detail.proposals.map(p => <option key={p.id} value={p.id}>Brief #{p.id} · {p.snapshot.firm} · {countRecords(p.snapshot) + (p.snapshot.apollo?.length || 0)} items</option>)}</select></label>
+          {detail.proposals.map(p => <option key={p.id} value={p.id}>Brief #{p.id} · {p.snapshot.firm} · {snapshotCount(p.snapshot)} items</option>)}</select></label>
         {olderApproval && <p className="coverage">This approval predates the current research or edits. To include the updated records, approve them in Research first.</p>}
-        {approval && <details><summary>Preview the approved data ({countRecords(approval.snapshot) + (approval.snapshot.apollo?.length || 0)} items)</summary>
+        {approval && <details><summary>Preview the approved data ({snapshotCount(approval.snapshot)} items)</summary>
           <p>Frozen snapshot for {approval.snapshot.firm}. Research edits do not change this approval.</p>
           {recordKinds.map(([kind, title]) => approval.snapshot[kind].length > 0 && <div key={kind}><strong>{title}</strong>
             <ul>{approval.snapshot[kind].map(r => <li key={r.id}>{recordLabel(kind, r)}</li>)}</ul></div>)}
           {approval.snapshot.apollo?.length > 0 && <div><strong>Apollo</strong>
             <ul>{approval.snapshot.apollo.map(item => <li key={item.key}>{item.category.replace('Apollo: ', '')}: {item.title}</li>)}</ul></div>}
+          {approval.snapshot.web?.length > 0 && <div><strong>Web findings</strong>
+            <ul>{approval.snapshot.web.map(item => <li key={item.id}>{sourceLabels[item.kind]}: {item.text}</li>)}</ul></div>}
           <a href={`${base}/${detail.id}/proposals/${approval.id}/demo-export`}>Download approved firm and staff JSON</a>
         </details>}
         <fieldset><legend>What should we create?</legend>{Object.entries(formatLabels).map(([format, label]) =>
@@ -311,7 +427,12 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
       {job.instructions && <details><summary>Sales instructions</summary><p>{job.instructions}</p></details>}
       <ul className="file-list">{job.files.map(file => <li key={file.id}><strong>{formatLabels[file.format]}</strong>
         {file.status === 'ready' ? <a href={`${base}/${detail.id}/outputs/${job.id}/files/${file.id}`}>Download .{file.format} · {Math.ceil(file.size / 1024)} KB</a>
-          : <span>{file.error || file.status}</span>}</li>)}</ul>
+          : <span>{file.error || file.stage || file.status}</span>}
+        {file.started_at && <small className="file-progress">{elapsed(file)} elapsed
+          {file.status === 'running' && file.updated_at && ` · Last activity ${Math.max(0, Math.floor((now - Date.parse(file.updated_at)) / 1000))}s ago`}</small>}
+        {file.status === 'running' && <progress className="file-progress" aria-label={`${formatLabels[file.format]} build in progress`} />}
+        {file.preview && <details className="file-progress"><summary>Model response{file.status === 'running' ? ' · live draft' : ''}</summary><pre className="stream-preview">{file.preview}</pre></details>}
+      </li>)}</ul>
       {['partial', 'failed'].includes(job.status) && <button type="button" disabled={busy || running} onClick={() => retry(job)}>Prepare retry of failed formats</button>}
     </article>)}
     {detail.proposals.some(p => p.status === 'ready') && <details><summary>Earlier PowerPoint downloads</summary>

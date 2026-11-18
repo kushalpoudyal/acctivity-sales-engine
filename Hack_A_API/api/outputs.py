@@ -3,10 +3,12 @@ import json
 import logging
 import os
 import zipfile
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 from xml.etree import ElementTree
 
+import openai
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Response
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
@@ -14,6 +16,7 @@ from pypdf.errors import PdfReadError
 
 from decks import DeckError, validate_pptx
 from documents import RENDERERS, write_copy
+from model_stream import ModelStreamError
 from prospects import SNAPSHOT_VERSION, database, digest
 
 router = APIRouter(prefix="/api/v1/firms", tags=["Output studio"])
@@ -66,18 +69,36 @@ def update_stage(job_id: int, stage: str):
 
 
 def save_file(job_id: int, format: str, data: bytes | None, error: str | None):
+    timestamp = datetime.now(timezone.utc).isoformat()
     with database() as db:
-        db.execute("UPDATE output_files SET status=?,content=?,error=? WHERE job_id=? AND format=?",
-                   ("ready" if data is not None else "failed", data, error, job_id, format))
+        db.execute("""UPDATE output_files SET status=?,content=?,error=?,stage=?,updated_at=?,finished_at=?
+                      WHERE job_id=? AND format=?""",
+                   ("ready" if data is not None else "failed", data, error,
+                    "Download saved" if data is not None else "Failed", timestamp, timestamp, job_id, format))
+
+
+def file_progress(job_id: int, format: str, stage: str, delta=None):
+    timestamp = datetime.now(timezone.utc).isoformat()
+    with database() as db:
+        db.execute("""UPDATE output_files SET status='running',stage=?,started_at=COALESCE(started_at,?),
+                      updated_at=?,preview=substr(preview || ?, -4000) WHERE job_id=? AND format=?""",
+                   (stage, timestamp, timestamp, delta or "", job_id, format))
 
 
 def generate_outputs(job_id: int, job: dict):
     """OpenAI writes the copy once; our brand templates build each requested file from the approved records."""
     snapshot = json.loads(job["snapshot"])
     update_stage(job_id, "Writing proposal copy with OpenAI")
-    copy = write_copy(snapshot, job["instructions"])
+
+    def progress(stage, delta):
+        for format in job["formats"]:
+            file_progress(job_id, format, f"Copy: {stage}", delta)
+
+    progress("Requesting proposal copy", None)
+    copy = write_copy(snapshot, job["instructions"], progress)
     for format in job["formats"]:
         update_stage(job_id, f"Building {format.upper()} from Acctivity templates")
+        file_progress(job_id, format, "Building from Acctivity template")
         try:
             data = RENDERERS[format](snapshot, copy, job["logo"])
             validate_document(data, format)
@@ -104,7 +125,9 @@ def run_outputs(job_id: int):
     except Exception as exc:
         # This background-task boundary must leave a persisted terminal state.
         logging.error("Output job %s failed (%s).", job_id, type(exc).__name__)
-        error = str(exc) if isinstance(exc, DeckError) else "Output build failed. Check provider access or retry this run."
+        error = (str(exc) if isinstance(exc, (DeckError, ModelStreamError)) else
+                 "OpenAI request timed out. Prepare a retry of this run." if isinstance(exc, openai.APITimeoutError) else
+                 "Output build failed. Check provider access or retry this run.")
     with database() as db:
         db.execute("""UPDATE output_files SET status='failed',error=?
                       WHERE job_id=? AND status!='ready' AND status!='failed'""",

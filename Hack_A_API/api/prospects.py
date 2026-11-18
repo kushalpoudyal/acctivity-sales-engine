@@ -1,10 +1,14 @@
 import json
 import hashlib
+import logging
 import os
 import re
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import closing, contextmanager
+from datetime import datetime, timezone
 from pathlib import Path
+from threading import Lock
 from urllib.parse import urlsplit
 
 import apollo
@@ -13,8 +17,11 @@ import openai
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
 from decks import DeckError, validate_pptx
 from documents import render_pptx, write_copy
-from firm_research import RECORD_KINDS, FactKind, ResearchError, crawl_site, download_logo, extract_profile
+from firm_research import (MAX_PAGES, RECORD_KINDS, FactKind, ResearchError, crawl_site, download_logo,
+                           extract_profile)
+from model_stream import ModelStreamError
 from pydantic import BaseModel, Field
+from web_research import search_web
 
 router = APIRouter(prefix="/api/v1/firms", tags=["Prospects"])
 DB_PATH = Path(__file__).with_name("prospects.sqlite3")
@@ -91,6 +98,12 @@ def initialize():
                 db.execute("INSERT INTO pages(firm_id,url,title,text) VALUES(?,?,?,?)",
                            (firm["id"], page["url"], page["title"], page["text"]))
             db.execute("UPDATE firms SET research_pages='[]' WHERE id=?", (firm["id"],))
+        # Cited observations from OpenAI web searches about the firm: no on-page evidence, so kept apart
+        # from the website records. kind is web_search or reputation_search (unverified, attributed).
+        db.execute("""CREATE TABLE IF NOT EXISTS web_findings (
+            id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL REFERENCES firms(id),
+            kind TEXT NOT NULL, title TEXT NOT NULL, text TEXT NOT NULL, sources TEXT NOT NULL DEFAULT '[]',
+            retrieved_at TEXT NOT NULL)""")
         # Revealed Apollo people, kept apart from website research so re-research never drops paid reveals.
         db.execute("""CREATE TABLE IF NOT EXISTS apollo_contacts (
             id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL REFERENCES firms(id),
@@ -120,6 +133,14 @@ def initialize():
             id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, format TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'queued', error TEXT, content BLOB,
             UNIQUE(job_id,format))""")
+        file_columns = {row["name"] for row in db.execute("PRAGMA table_info(output_files)")}
+        for column, definition in [
+            ("stage", "TEXT NOT NULL DEFAULT 'Queued'"), ("container_id", "TEXT"),
+            ("started_at", "TEXT"), ("updated_at", "TEXT"), ("finished_at", "TEXT"),
+            ("preview", "TEXT NOT NULL DEFAULT ''"),
+        ]:
+            if column not in file_columns:
+                db.execute(f"ALTER TABLE output_files ADD COLUMN {column} {definition}")
         db.execute("""UPDATE output_files SET status='failed',error='Build interrupted; start a new run.'
                       WHERE job_id IN (SELECT id FROM output_jobs WHERE status IN ('queued','running'))
                       AND status!='ready'""")
@@ -186,7 +207,7 @@ def get_firm(firm_id: int):
                             apollo_org,apollo_enriched_at FROM firms WHERE id=?""", (firm_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Firm not found.")
-        records, contacts, extra, token = review_state(db, row)
+        records, contacts, extra, web, token = review_state(db, row)
         pages_saved = db.execute("SELECT count(*) FROM pages WHERE firm_id=?", (firm_id,)).fetchone()[0]
         proposals = [{**dict(p), "snapshot": json.loads(p["snapshot"])} for p in db.execute(
             """SELECT id,status,error,snapshot FROM proposals
@@ -200,12 +221,14 @@ def get_firm(firm_id: int):
         for job in outputs:
             job["formats"] = json.loads(job["formats"])
             job["files"] = [dict(p) for p in db.execute(
-                "SELECT id,format,status,error,length(content) AS size FROM output_files WHERE job_id=?",
+                """SELECT id,format,status,error,length(content) AS size,stage,started_at,updated_at,
+                   finished_at,preview FROM output_files WHERE job_id=?""",
                 (job["id"],))]
     return {**dict(row), "research_meta": json.loads(row["research_meta"]), "records": records,
             "brief_token": token, "pages_saved": pages_saved,
             "apollo_org": json.loads(row["apollo_org"]) if row["apollo_org"] else None,
             "apollo_configured": apollo.configured(), "apollo_contacts": contacts, "apollo_findings": extra,
+            "web_findings": web,
             "proposals": proposals, "brand_assets": assets, "outputs": outputs}
 
 
@@ -270,6 +293,7 @@ def demo_export(firm_id: int, proposal_id: int):
                "staff": list(staff.values()), "practice_areas": snapshot["practice_areas"],
                "offices": snapshot["offices"], "facts": snapshot["facts"],
                "apollo": [item for item in snapshot.get("apollo", []) if not item.get("person")],
+               "web": snapshot.get("web", []),
                "branding": [{**asset, "download_path": f"/api/v1/firms/{firm_id}/brand-assets/{asset['id']}"}
                             for asset in logos]}
     return Response(content=json.dumps(payload, indent=2), media_type="application/json",
@@ -288,14 +312,23 @@ def load_contacts(db, firm_id: int, people: list[dict]) -> list[dict]:
             for row in db.execute("SELECT * FROM apollo_contacts WHERE firm_id=? ORDER BY full_name", (firm_id,))]
 
 
-def review_state(db, firm) -> tuple[dict, list[dict], list[dict], str]:
-    """Research records, Apollo contacts, Apollo findings and the review token, read in the caller's
-    transaction. The token changes when any of them, the firm name or the preferred logo change."""
+def load_web_findings(db, firm_id: int) -> list[dict]:
+    return [{"id": row["id"], "kind": row["kind"], "title": row["title"], "text": row["text"],
+             "sources": json.loads(row["sources"]), "retrieved_at": row["retrieved_at"],
+             "not_verified_review_sample": row["kind"] == "reputation_search"}
+            for row in db.execute("SELECT * FROM web_findings WHERE firm_id=? ORDER BY id", (firm_id,))]
+
+
+def review_state(db, firm) -> tuple[dict, list[dict], list[dict], list[dict], str]:
+    """Research records, Apollo contacts, Apollo findings, web findings and the review token, read in the
+    caller's transaction. The token changes when any of them, the firm name or the preferred logo change."""
     records = load_records(db, firm["id"])
     contacts = load_contacts(db, firm["id"], records["people"])
     extra = apollo_findings(json.loads(firm["apollo_org"]) if firm["apollo_org"] else None,
                             firm["apollo_enriched_at"], contacts)
-    return records, contacts, extra, digest(json.dumps([firm["name"], firm["preferred_logo_id"], records, extra]))
+    web = load_web_findings(db, firm["id"])
+    token = digest(json.dumps([firm["name"], firm["preferred_logo_id"], records, extra, web]))
+    return records, contacts, extra, web, token
 
 
 class FactEdit(BaseModel):
@@ -361,7 +394,7 @@ def edit_brief(firm_id: int, body: BriefEdit):
         firm = db.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
         if not firm:
             raise HTTPException(404, "Firm not found.")
-        records, _, _, token = review_state(db, firm)
+        records, _, _, _, token = review_state(db, firm)
         if firm["status"] == "researching" or token != body.brief_token:
             raise HTTPException(409, "Research changed or is running. Refresh before editing.")
         for kind in RECORD_KINDS:
@@ -408,6 +441,7 @@ class Approval(BaseModel):
     people: list[int] = []
     offices: list[int] = []
     apollo_findings: list[str] = Field(default_factory=list, max_length=1000)
+    web_findings: list[int] = []
 
 
 @router.post("/{firm_id}/approvals")
@@ -417,12 +451,14 @@ def approve(firm_id: int, body: Approval):
         firm = db.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
         if not firm:
             raise HTTPException(404, "Firm not found.")
-        records, _, extra, token = review_state(db, firm)
+        records, _, extra, web, token = review_state(db, firm)
         if token != body.brief_token or firm["status"] == "researching":
             raise HTTPException(409, "Research changed or is running. Refresh and review the records again.")
         keys = set(body.apollo_findings)
         if keys - {item["key"] for item in extra}:
             raise HTTPException(422, "Select Apollo findings from the current review.")
+        if set(body.web_findings) - {item["id"] for item in web}:
+            raise HTTPException(422, "Select web findings from the current review.")
         area_names = {area["id"]: area["name"] for area in records["practice_areas"]}
         chosen = {}
         for kind in RECORD_KINDS:
@@ -438,10 +474,12 @@ def approve(firm_id: int, body: Approval):
                         record["practice_areas"] = [area_names[i] for i in record.pop("practice_area_ids")]
                     chosen[kind].append(record)
         chosen_apollo = [item for item in extra if item["key"] in keys]
-        if not any(chosen.values()) and not chosen_apollo:
+        chosen_web = [item for item in web if item["id"] in set(body.web_findings)]
+        if not any(chosen.values()) and not chosen_apollo and not chosen_web:
             raise HTTPException(422, "Select at least one record to approve.")
         snapshot = json.dumps({"version": SNAPSHOT_VERSION, "brief_token": body.brief_token,
-                               "firm": firm["name"], "domain": firm["domain"], **chosen, "apollo": chosen_apollo})
+                               "firm": firm["name"], "domain": firm["domain"], **chosen,
+                               "apollo": chosen_apollo, "web": chosen_web})
         token = digest(snapshot)
         db.execute("INSERT OR IGNORE INTO proposals(firm_id,digest,snapshot) VALUES(?,?,?)",
                    (firm_id, token, snapshot))
@@ -571,66 +609,149 @@ def store_research(db, firm_id: int, pages: list[dict], records: dict[str, list[
         insert("offices", office, EDITABLE["offices"])
 
 
-def research(firm_id: int, domain: str, reuse_pages: bool = False):
-    def progress(count):
-        with database() as db:
-            db.execute("UPDATE firms SET research_meta=? WHERE id=?",
-                       (json.dumps({"stage": "Reading website pages", "pages_read": count}), firm_id))
+class ResearchOptions(BaseModel):
+    web_search: bool = True
+    reputation: bool = True
+    reuse_pages: bool = False
 
-    pages, warnings, logos, records = [], [], [], {}
-    try:
-        if reuse_pages:
-            with database() as db:
-                pages = [{"id": number, "url": row["url"], "title": row["title"], "text": row["text"]}
-                         for number, row in enumerate(db.execute(
-                             "SELECT url,title,text FROM pages WHERE firm_id=? ORDER BY id", (firm_id,)), 1)]
-            if not pages:
-                raise ResearchError("No saved pages to re-extract. Run website research first.")
-        else:
-            pages, warnings = crawl_site(domain, progress)
-        with database() as db:
-            db.execute("UPDATE firms SET research_meta=? WHERE id=?",
-                       (json.dumps({"stage": "Extracting firm profile", "pages_read": len(pages)}), firm_id))
-        with openai.OpenAI(timeout=180, max_retries=0) as client:
-            records, rejected = extract_profile(
-                client, os.getenv("OPENAI_RESEARCH_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-6.1-sol",
-                [{key: page[key] for key in ("id", "url", "title", "text")} for page in pages])
-        if rejected:
-            warnings.append(f"{rejected} records or fields omitted because supporting evidence could not be verified.")
+
+def crawl_research(domain: str, model: str, progress, saved_pages: list[dict] | None = None):
+    """The website source: crawl (or reuse saved pages), extract records and save published logos."""
+    if saved_pages is None:
+        progress(stage="Reading website pages")
+        pages, warnings = crawl_site(domain, progress)
+    elif not saved_pages:
+        raise ResearchError("No saved pages to re-extract. Run website research first.")
+    else:
+        pages, warnings = saved_pages, []
+    progress(stage="Extracting structured firm data")
+    with openai.OpenAI(timeout=180, max_retries=0) as client:
+        records, rejected = extract_profile(
+            client, model, [{key: page[key] for key in ("id", "url", "title", "text")} for page in pages],
+            progress=progress)
+    if rejected:
+        warnings.append(f"{rejected} records or fields omitted because supporting evidence could not be verified.")
+    logos = []
+    if saved_pages is None:
+        progress(stage="Saving published logos")
         for url in dict.fromkeys(url for page in pages for url in page.get("logos", [])):
             try:
                 logos.append(download_logo(url, domain))
             except ResearchError as exc:
                 warnings.append(f"Logo {url}: {exc}")
-        status = "ready" if any(records.values()) else "needs_review"
-        error = None if status == "ready" else "No evidence-backed records returned. Review the website or retry."
-    except ResearchError as exc:
-        status, records, error = "failed", {}, str(exc)
-    except openai.OpenAIError:
-        status, records, error = "failed", {}, "OpenAI research failed. Check model access, quota and connectivity."
+    return records, pages, logos, warnings
+
+
+def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
+    options = options or ResearchOptions()
+    model = os.getenv("OPENAI_RESEARCH_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-6.1-sol"
+    firm = get_firm(firm_id)
+    saved_pages = None
+    if options.reuse_pages:
+        with database() as db:
+            saved_pages = [{"id": number, "url": row["url"], "title": row["title"], "text": row["text"]}
+                           for number, row in enumerate(db.execute(
+                               "SELECT url,title,text FROM pages WHERE firm_id=? ORDER BY id", (firm_id,)), 1)]
+    enabled = ["website"] + (["web_search"] if options.web_search else []) + (
+        ["reputation"] if options.reputation else [])
+    started_at = datetime.now(timezone.utc).isoformat()
+    meta = {"stage": "Researching sources in parallel", "pages_read": 0, "max_pages": MAX_PAGES,
+            "started_at": started_at, "updated_at": started_at, "provider_timeout_seconds": 180,
+            "sources": {name: {"status": "running", "started_at": started_at,
+                               "stage": ("Re-extracting saved pages" if options.reuse_pages else "Starting website crawl")
+                               if name == "website" else "Searching the web"}
+                        for name in enabled}}
+    lock = Lock()
+
+    def persist_progress(count=None, stage=None, source="website", delta=None, characters=None):
+        with lock:
+            if count is not None:
+                meta["pages_read"] = count
+            if stage is not None:
+                meta["sources"][source]["stage"] = stage
+            if delta:
+                meta["sources"][source]["preview"] = (meta["sources"][source].get("preview", "") + delta)[-12000:]
+            if characters is not None:
+                meta["sources"][source]["characters_received"] = characters
+            meta["updated_at"] = datetime.now(timezone.utc).isoformat()
+            with database() as db:
+                db.execute("UPDATE firms SET research_meta=? WHERE id=?", (json.dumps(meta), firm_id))
+
+    persist_progress()
+    results, errors = {}, {}
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(crawl_research, domain, model, persist_progress, saved_pages): "website"}
+        if options.web_search:
+            futures[executor.submit(search_web, domain, firm["name"], model,
+                progress=lambda stage, delta: persist_progress(stage=stage, source="web_search", delta=delta))] = "web_search"
+        if options.reputation:
+            futures[executor.submit(search_web, domain, firm["name"], model, True,
+                progress=lambda stage, delta: persist_progress(stage=stage, source="reputation", delta=delta))] = "reputation"
+        for future in as_completed(futures):
+            name = futures[future]
+            try:
+                value = future.result()
+                results[name] = value
+                found = sum(len(v) for v in value[0].values()) if name == "website" else len(value)
+                source_status = {"status": "completed" if found else "no_results", "findings": found}
+                if name != "website":
+                    source_status["findings_preview"] = value
+            except Exception as exc:
+                # Each independent provider task reports failure without discarding other sources.
+                logging.error("Research source %s failed for firm %s (%s).", name, firm_id, type(exc).__name__)
+                if isinstance(exc, openai.APITimeoutError):
+                    code = "provider_timeout"
+                    errors[name] = "OpenAI request timed out. Other source results are preserved; retry the research."
+                elif isinstance(exc, (ResearchError, ModelStreamError)):
+                    code = "research_error"
+                    errors[name] = str(exc)
+                else:
+                    code = "source_error"
+                    errors[name] = "Research source failed. Check provider access, quota and connectivity."
+                source_status = {"status": "failed", "error": errors[name], "error_code": code}
+            with lock:
+                meta["sources"][name] = {**meta["sources"][name], **source_status,
+                                          "stage": source_status["status"],
+                                          "finished_at": datetime.now(timezone.utc).isoformat()}
+            persist_progress()
+    records, pages, logos, warnings = results.get("website", ({}, [], [], []))
+    warnings.extend(f"{name}: {error}" for name, error in errors.items())
+    website_found = any(records.values())
+    if not website_found:
+        warnings.append("No new website records were extracted; previously saved records and branding were retained.")
+    searches = {name: results[name] for name in ("web_search", "reputation") if name in results}
+    found = website_found or any(searches.values())
+    status = "ready" if website_found and not errors else "needs_review" if found else "failed"
+    error = ("Some research sources failed. Review source coverage below." if errors and found else
+             "No sourced findings returned. Review source coverage or retry." if not found else None)
+    timestamp = datetime.now(timezone.utc).isoformat()
     with database() as db:
-        if any(records.values()):
+        if website_found:
             store_research(db, firm_id, pages, records)
             db.execute("UPDATE firms SET researched_at=CURRENT_TIMESTAMP WHERE id=?", (firm_id,))
             # A re-extraction reads saved pages only, so it keeps the logos from the last crawl.
-            if not reuse_pages:
+            if not options.reuse_pages:
                 db.execute("UPDATE firms SET preferred_logo_id=NULL WHERE id=?", (firm_id,))
                 db.execute("DELETE FROM brand_assets WHERE firm_id=?", (firm_id,))
                 for logo in logos:
                     db.execute("INSERT INTO brand_assets(firm_id,source_url,mime_type,content) VALUES(?,?,?,?)",
                                (firm_id, logo["source_url"], logo["mime_type"], logo["content"]))
+        # A search that ran replaces that kind's earlier findings; a failed or disabled one keeps them.
+        for name, findings in searches.items():
+            kind = "reputation_search" if name == "reputation" else "web_search"
+            db.execute("DELETE FROM web_findings WHERE firm_id=? AND kind=?", (firm_id, kind))
+            db.executemany("INSERT INTO web_findings(firm_id,kind,title,text,sources,retrieved_at) VALUES(?,?,?,?,?,?)",
+                           [(firm_id, kind, f["title"], f["text"], json.dumps(f["sources"]), timestamp)
+                            for f in findings])
         db.execute("UPDATE firms SET status=?, error=? WHERE id=?", (status, error, firm_id))
         db.execute("UPDATE firms SET research_meta=? WHERE id=?",
-                   (json.dumps({"stage": status, "pages_read": len(pages), "warnings": warnings,
+                   (json.dumps({**meta, "stage": status, "finished_at": timestamp, "updated_at": timestamp,
+                                "pages_read": max(len(pages), meta["pages_read"]), "warnings": warnings,
                                 "pages": [{"url": p["url"], "title": p["title"]} for p in pages]}), firm_id))
 
 
-class ResearchRequest(BaseModel):
-    reuse_pages: bool = False
-
-
 @router.post("/{firm_id}/research", status_code=202)
-def start_research(firm_id: int, tasks: BackgroundTasks, body: ResearchRequest):
+def start_research(firm_id: int, tasks: BackgroundTasks, body: ResearchOptions):
     firm = get_firm(firm_id)
     if not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(503, "Research is not configured on the server.")
@@ -640,9 +761,8 @@ def start_research(firm_id: int, tasks: BackgroundTasks, body: ResearchRequest):
         if not db.execute("UPDATE firms SET status='researching',error=NULL,research_meta='{}' WHERE id=? AND status!='researching'",
                           (firm_id,)).rowcount:
             raise HTTPException(409, "Research is already running.")
-    tasks.add_task(research, firm_id, firm["domain"], body.reuse_pages)
+    tasks.add_task(research, firm_id, firm["domain"], body)
     return {"id": firm_id, "status": "researching"}
-
 
 DEFAULT_TITLES = ["Managing Partner", "Partner", "Practice Manager", "General Manager", "Operations Manager",
                   "Finance Manager", "CFO"]

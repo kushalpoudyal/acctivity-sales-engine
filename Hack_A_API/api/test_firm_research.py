@@ -1,8 +1,11 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+
+from pydantic import ValidationError
 
 from firm_research import (FirmProfile, Office, Person, PracticeArea, ResearchConnectionError, ResearchError,
-                           canonical_url, crawl_site, download_logo, fetch_public, fetch_resource, grounded_profile)
+                           canonical_url, crawl_site, download_logo, extract_profile, fetch_public, fetch_resource,
+                           grounded_profile)
 
 PAGE = {"id": 1, "url": "https://firm.example/jane", "title": "Jane",
         "text": "Biography: Jane Smith is a family law Partner. Call (02) 1111 2222."}
@@ -91,3 +94,24 @@ class FirmResearchTests(unittest.TestCase):
             with self.assertRaises(ResearchError):
                 fetch_resource("https://firm.example/", "firm.example")
         self.assertEqual(request.call_count, 1)
+
+    def test_crawl_stops_at_twelve_pages(self):
+        def fake(url, domain):
+            if url.endswith("/robots.txt"):
+                return url, "text/plain", "User-agent: *\nAllow: /"
+            links = "".join(f'<a href="/team/{i}/">Lawyer {i}</a>' for i in range(30))
+            return url, "text/html", "<p>Public website content</p>" + (links if url.endswith(".example/") else "")
+
+        with patch("firm_research.fetch_public", side_effect=fake), patch("firm_research.time.sleep"):
+            pages, warnings = crawl_site("firm.example", lambda n: None)
+        self.assertEqual(len(pages), 12)
+        self.assertIn("Crawl limit reached; some pages were not read.", warnings)
+
+    def test_invalid_model_output_is_reported_as_validation_not_timeout(self):
+        try:
+            FirmProfile.model_validate({"findings": [{"category": "unexpected"}]})
+        except ValidationError as exc:
+            error = exc
+        with patch("firm_research.stream_response", side_effect=error), self.assertLogs(level="ERROR"), \
+                self.assertRaisesRegex(ResearchError, "invalid structured firm data"):
+            extract_profile(Mock(), "test-model", [])

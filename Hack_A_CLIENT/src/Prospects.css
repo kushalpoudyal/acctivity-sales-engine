@@ -1,51 +1,227 @@
-.prospects{max-width:1380px;margin:auto;padding:2.5rem 1.5rem 5rem;color:#203e38}
-.prospects h1,.prospects h2{font-family:Georgia,serif}.prospects h1{font-size:clamp(2rem,4vw,3.8rem)}
-.prospects h2{font-size:1.75rem}.prospects h3{margin:.5rem 0}.prospects p{margin:.5rem 0 1rem;line-height:1.6}
-.prospects .directory-header{margin-bottom:2rem}.prospects small,.prospects .muted{color:#526a62}
-.prospects .intake{display:flex;align-items:end;gap:1rem;flex-wrap:wrap;padding:1.25rem;background:white;border:1px solid #d5dfd8;border-radius:12px;margin-bottom:1.5rem}
-.prospects .intake h2{align-self:center;margin-right:auto}
-.prospects label{display:block;font-size:.88rem}.prospects input:not([type=checkbox]):not([type=radio]),.prospects textarea,.prospects select{display:block;width:100%;margin:.35rem 0 .85rem;padding:.65rem;max-width:100%;border:1px solid #8da49a;border-radius:6px;color:#203e38;background:white;font:inherit}
-.prospects textarea{resize:vertical;line-height:1.6}.prospects select{font:inherit}
-.prospects button{padding:.7rem 1rem;background:#165952;border:0;border-radius:7px;color:white;cursor:pointer;font:inherit}
-.prospects button.secondary{background:#edf3ee;color:#204b40}.prospects .toolbar-actions{display:flex;gap:.6rem;flex-wrap:wrap}
-.prospects button:disabled{opacity:.5;cursor:not-allowed}.prospects .prospect-grid{display:grid;grid-template-columns:280px minmax(0,1fr);gap:1.25rem;align-items:start}
-.prospects .directory,.prospects .workspace{padding:1.4rem;background:white;border:1px solid #d5dfd8;border-radius:12px;min-width:0}
-.prospects .directory{position:sticky;top:1rem}.prospects .directory h2{margin-bottom:1rem}
-.prospects .firm-row{display:block;text-align:left;width:100%;margin-top:.65rem;background:#edf3ee;color:#223d36;overflow-wrap:anywhere}
-.prospects .firm-row span,.prospects .firm-row small{display:block;font-size:.8rem;margin-top:.25rem}
-.prospects .firm-row[aria-pressed=true]{box-shadow:inset 4px 0 #165952;background:#dcece3}
-.prospects .workspace-heading,.prospects .research-toolbar,.prospects .review-actions,.prospects .approval-bar,.prospects .run-heading{display:flex;justify-content:space-between;align-items:center;gap:1rem;flex-wrap:wrap}
-.prospects .badge{display:inline-block;padding:.25rem .6rem;border-radius:20px;background:#e6f0e9;font:500 .78rem system-ui;white-space:normal}
-.prospects .workspace-tabs{display:flex;gap:.5rem;border-bottom:1px solid #d5dfd8;margin:1rem 0 1.5rem;padding-bottom:.6rem}
-.prospects .workspace-tabs button{background:#edf3ee;color:#204b40}.prospects .workspace-tabs button[aria-selected=true]{background:#165952;color:white}
-.prospects .research-toolbar{background:#f0f5f1;padding:1rem;border-radius:9px}.prospects .research-toolbar p{margin-bottom:0;max-width:420px}
-.prospects .coverage{padding:.5rem;color:#426856}.prospects .section-title{margin:1.8rem 0 1rem}.prospects .section-title h3{margin-bottom:.2rem}
-.prospects .logo-options{display:flex;flex-wrap:wrap;gap:1rem}.prospects .logo-option{padding:.8rem;border:1px solid #d5dfd8;border-radius:8px;max-width:240px}
-.prospects .firm-logo{display:block;max-width:180px;max-height:80px;object-fit:contain;background:#eef0ee;margin:.5rem 0}
-.prospects .choice{display:flex;gap:.6rem;align-items:flex-start;margin:.5rem 0}.prospects input[type=checkbox],.prospects input[type=radio]{accent-color:#165952;flex:none;margin-top:.3rem}
-.prospects .category-heading{padding-top:.6rem;border-top:1px solid #d5dfd8}.prospects .finding-card{background:#f5f8f5;border:1px solid #dce5dd;border-radius:9px;padding:1rem;margin:1rem 0}
-.prospects .field-grid{display:grid;grid-template-columns:1fr 1fr;gap:0 1rem}.prospects .source-links{margin:.6rem 0}.prospects .source-links a{margin-right:.75rem}
-.prospects a{text-decoration:underline;color:#12534a;overflow-wrap:anywhere}.prospects li{margin-bottom:.7rem;overflow-wrap:anywhere}
-.prospects details{margin:.8rem 0;color:#3b5f55}.prospects summary{cursor:pointer}.prospects blockquote{margin:.6rem;font-size:.88rem;white-space:pre-wrap}
-.prospects .review-actions{margin-top:1rem}.prospects .review-actions span{font-size:.85rem}
-.prospects .approval-bar{padding:1.2rem;background:#e5f0e9;border-radius:9px;margin-top:1.5rem}.prospects .approval-bar p{margin:0;font-size:.85rem}
-.prospects .output-form{margin:1.5rem 0}.prospects fieldset{margin:1rem 0;padding:.8rem;border:1px solid #d5dfd8;border-radius:8px}
-.prospects .format-option{display:flex;gap:.8rem;padding:.8rem}.prospects .format-option small{display:block}
-.prospects .output-run{padding:1rem;border:1px solid #d5dfd8;border-radius:10px;margin:1rem 0}.prospects .file-list{padding:0;list-style:none}
-.prospects .file-list li{display:flex;flex-wrap:wrap;justify-content:space-between;gap:.5rem;padding:.7rem 0;border-bottom:1px solid #e5ece6}
-.prospects [role=alert]{padding:.9rem;background:#fff0d4;border-radius:7px;margin:1rem 0}.prospects .empty-state{padding:1.5rem;background:#f0f5f1;border-radius:8px;margin:1rem 0}
-.prospects [hidden]{display:none!important}
-@media(max-width:850px){.prospects .prospect-grid{grid-template-columns:1fr}.prospects .directory{position:static}.prospects .field-grid{grid-template-columns:1fr}.prospects{padding:1rem}.prospects .intake label{flex:1;min-width:180px}}
-/* Apollo (enrich, contacts, review groups, staff table and Find firms), ported from the Apollo stack. */
-.prospects .find-firms{padding:1.25rem;background:white;border:1px solid #d5dfd8;border-radius:12px;margin-bottom:1.5rem}
-.prospects .find-firms form{display:flex;align-items:end;gap:1rem;flex-wrap:wrap}.prospects .find-firms form label{flex:1;min-width:14rem}
-.prospects .staff-table{overflow:auto}.prospects table{width:100%;border-collapse:collapse;font-size:.85rem}
-.prospects th,.prospects td{padding:.5rem;text-align:left;border-bottom:1px solid #d5dfd8;vertical-align:top}
-.prospects .apollo-panel{margin:1rem 0;padding:1rem;background:#f3f7f4;border-radius:8px}
-.prospects .apollo-panel dl{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1rem;margin:0 0 1rem;font-size:.88rem}
-.prospects .apollo-panel dt{font-weight:600}.prospects .apollo-panel dd{margin:0;overflow-wrap:anywhere}
-.prospects .apollo-search{display:grid;gap:.5rem;margin:0 0 .5rem;padding:0;background:none}
-.prospects .candidate-list,.prospects .apollo-list{list-style:none;padding:0;margin:0 0 1rem}
-.prospects .apollo-list li{padding:1rem;background:#f5f8f5;border:1px solid #dce5dd;border-radius:9px}
-.prospects .apollo-compact{display:flex;flex-wrap:wrap;gap:.4rem}.prospects .apollo-compact li{margin:0;padding:.35rem .65rem}
-.prospects .apollo-compact .choice{margin:0}
+/* Prospects workspace, styled to the Stalktivity design "ISE 02 · Firm › 01 Research" (tokens in index.css) */
+
+/* Page background: grey/50 base, watercolour image (cover), 60% grey/50 overlay */
+.prospects-page {
+  min-height: 100vh;
+  background:
+    linear-gradient(rgb(244 242 243 / .6), rgb(244 242 243 / .6)),
+    url('./assets/page-bg.png') center / cover no-repeat fixed,
+    var(--grey-50);
+}
+
+.prospects { max-width: 1440px; margin: auto; padding: 48px 40px 64px; color: var(--grey-800); font-size: 15px; }
+.prospects h1, .prospects h2 { font-family: var(--font-display); font-weight: 600; color: var(--grey-800); }
+.prospects h2 { font-size: 30px; line-height: 1.2; }
+.prospects h3 { margin: 0; font-size: 18px; font-weight: 600; color: var(--grey-800); }
+.prospects p { margin: 6px 0 12px; line-height: 1.6; color: var(--grey-700); }
+.prospects small, .prospects .muted { color: var(--grey-700); font-size: 14px; }
+.prospects strong { font-weight: 600; color: var(--grey-800); }
+
+/* Page header: brand, large title, subtitle */
+.prospects .directory-header { margin-bottom: 28px; }
+.app-brand { display: inline-flex; align-items: center; gap: 10px; font-family: var(--font-display); font-size: 18px; font-weight: 600; color: var(--grey-800); }
+.prospects .app-brand { color: var(--grey-800); text-decoration: none; font-weight: 600; }
+.prospects .app-brand:hover { color: var(--grey-800); text-decoration: none; }
+.app-brand img { display: block; border-radius: 6px; }
+.prospects .directory-header h1 { margin-top: 9px; font-size: clamp(40px, 5vw, 64px); line-height: 1.05; letter-spacing: -.01em; }
+.prospects .directory-header p { margin: 11px 0 0; font-size: 18px; line-height: 1.3; color: var(--grey-700); }
+
+/* Cards */
+.prospects .intake,
+.prospects .directory,
+.prospects .workspace { background: var(--grey-0); border: 1px solid var(--grey-100); border-radius: 16px; min-width: 0; }
+
+/* Add a firm */
+.prospects .intake { display: flex; align-items: end; justify-content: flex-end; gap: 16px; flex-wrap: wrap; padding: 29px 33px; margin-bottom: 28px; }
+.prospects .intake h2 { align-self: center; margin-right: auto; }
+.prospects .intake label { width: 260px; }
+.prospects .intake input:not([type=checkbox]):not([type=radio]) { margin-bottom: 0; }
+
+/* Form controls */
+.prospects label { display: block; font-size: 14px; font-weight: 500; color: var(--grey-800); }
+.prospects input:not([type=checkbox]):not([type=radio]),
+.prospects textarea,
+.prospects select {
+  display: block; width: 100%; max-width: 100%; margin: 8px 0 16px; padding: 12px 14px; min-height: 48px;
+  border: 1px solid var(--grey-200); border-radius: 10px; background: var(--grey-0);
+  color: var(--grey-800); font: inherit; font-size: 15px; font-weight: 400;
+  transition: border-color .15s, box-shadow .15s;
+}
+.prospects input::placeholder, .prospects textarea::placeholder { color: var(--grey-600); }
+.prospects input:not([type=checkbox]):not([type=radio]):focus,
+.prospects textarea:focus,
+.prospects select:focus { outline: none; border-color: var(--blue-500); box-shadow: 0 0 0 3px var(--blue-50); }
+.prospects input:disabled, .prospects textarea:disabled, .prospects select:disabled { background: var(--grey-50); color: var(--grey-600); }
+.prospects textarea { resize: vertical; line-height: 1.55; }
+.prospects input[type=checkbox], .prospects input[type=radio] { accent-color: var(--blue-600); flex: none; margin-top: .15rem; width: 18px; height: 18px; }
+
+/* Buttons: primary blue/600; disabled grey/100 with grey/700 text */
+.prospects button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 48px; padding: 12px 20px; background: var(--blue-600); border: 1px solid transparent;
+  border-radius: 10px; color: var(--grey-0); cursor: pointer; font: inherit; font-size: 15px; font-weight: 600;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.prospects button:hover:not(:disabled) { background: var(--blue-700); }
+.prospects button:disabled { background: var(--grey-100); color: var(--grey-700); cursor: not-allowed; }
+
+/* Secondary action (re-extract from saved pages) and the research toolbar's button group */
+.prospects button.secondary { background: var(--grey-50); color: var(--grey-800); border-color: var(--grey-100); }
+.prospects button.secondary:hover:not(:disabled) { background: var(--grey-100); }
+.prospects .toolbar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* Layout */
+.prospects .prospect-grid { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 24px; align-items: start; }
+.prospects .directory { padding: 29px; position: sticky; top: 16px; }
+.prospects .workspace { padding: 33px; }
+.prospects .directory h2 { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.prospects .directory h2 .badge { padding: 2px 10px; font-size: 13px; }
+.prospects .directory label { margin-bottom: 4px; }
+
+/* Firm list items */
+.prospects .firm-row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px; width: 100%; min-height: 0; margin-top: 12px; padding: 17px 19px;
+  text-align: left; background: var(--grey-50); color: var(--grey-800); border: 1px solid var(--grey-50); border-radius: 12px;
+  font-size: 16px; font-weight: 600; overflow-wrap: anywhere;
+}
+.prospects .firm-row:hover:not(:disabled) { background: var(--blue-0); border-color: var(--grey-100); }
+.prospects .firm-row:disabled { background: var(--grey-50); color: var(--grey-800); }
+.prospects .firm-row strong { font-weight: 600; }
+.prospects .firm-row span { font-size: 14px; font-weight: 400; color: var(--grey-700); }
+.prospects .firm-row[aria-pressed=true] { background: var(--blue-50); border-color: var(--blue-500); box-shadow: inset 4px 0 #2c6f8e; }
+
+/* Status pills (per-status colours from the design's Badge / Status component) */
+.prospects .badge,
+.prospects .firm-row small {
+  display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--blue-50);
+  color: var(--blue-700); font: 600 12px/1.3 var(--font-body); white-space: normal;
+}
+.prospects :is(.badge, small)[data-status=new] { background: var(--grey-50); color: var(--grey-800); }
+.prospects :is(.badge, small)[data-status=researching],
+.prospects :is(.badge, small)[data-status=ready] { background: var(--blue-50); color: var(--blue-700); }
+.prospects :is(.badge, small)[data-status=needs_review] { background: var(--gold-100); color: var(--gold-700); }
+.prospects :is(.badge, small)[data-status=failed] { background: var(--red-50); color: var(--red-700); }
+
+/* Workspace heading */
+.prospects .workspace-heading,
+.prospects .research-toolbar,
+.prospects .review-actions,
+.prospects .approval-bar,
+.prospects .run-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.prospects .workspace-heading small { font-size: 12px; font-weight: 600; letter-spacing: .06em; color: var(--grey-700); }
+.prospects .workspace-heading h2 { font-size: 34px; margin-top: 4px; }
+.prospects .workspace-heading p { margin: 4px 0 0; font-size: 16px; }
+.prospects .workspace-heading .badge { padding: 6px 14px; font-size: 13px; }
+
+/* Step tabs */
+.prospects .workspace-tabs { display: flex; gap: 10px; flex-wrap: wrap; border-bottom: 1px solid var(--grey-100); margin: 28px 0; padding-bottom: 17px; }
+.prospects .workspace-tabs button { font-size: 16px; font-weight: 500; background: var(--grey-50); color: var(--grey-800); }
+.prospects .workspace-tabs button:hover:not(:disabled) { background: var(--grey-100); }
+.prospects .workspace-tabs button[aria-selected=true] { background: var(--blue-600); color: var(--grey-0); }
+
+/* Research panel */
+.prospects .research-toolbar { background: var(--blue-0); border: 1px solid var(--blue-50); padding: 25px; border-radius: 12px; margin-bottom: 28px; }
+.prospects .research-toolbar h3 { margin-bottom: 6px; }
+.prospects .research-toolbar p { margin: 0; max-width: 460px; font-size: 15px; line-height: 24px; }
+.prospects .coverage { margin: 0 0 28px; padding: 14px 22px; border-radius: 12px; background: var(--blue-50); color: var(--blue-700); font-size: 15px; }
+.prospects .section-title { margin: 28px 0 10px; }
+.prospects .section-title h3 { margin-bottom: 10px; }
+
+/* Logos */
+.prospects .logo-options { display: flex; flex-wrap: wrap; gap: 12px; }
+.prospects .logo-option { padding: 14px; border: 1px solid var(--grey-100); border-radius: 12px; max-width: 240px; background: var(--grey-0); }
+.prospects .logo-option:has(input:checked) { border-color: var(--blue-500); background: var(--blue-50); }
+.prospects .firm-logo { display: block; max-width: 180px; max-height: 80px; object-fit: contain; background: var(--grey-50); border-radius: 6px; margin: 8px 0; }
+
+/* Findings */
+.prospects .choice { display: flex; gap: 12px; align-items: center; min-height: 40px; margin: 0; font-size: 15px; font-weight: 400; }
+.prospects .category-heading { padding-top: 16px; margin-top: 12px; border-top: 1px solid var(--grey-100); font-family: var(--font-display); font-size: 20px; }
+.prospects .finding-card { background: var(--grey-0); border: 1px solid var(--grey-100); border-radius: 12px; padding: 22px; margin: 12px 0; }
+.prospects .finding-card .choice { margin-bottom: 10px; }
+.prospects .finding-card .badge { margin-top: 4px; }
+.prospects .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+.prospects .source-links { margin: 10px 0; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+
+.prospects a { color: var(--blue-600); font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+.prospects a:hover { color: var(--blue-700); text-decoration: underline; }
+.prospects li { margin-bottom: 8px; overflow-wrap: anywhere; color: var(--grey-700); line-height: 1.55; }
+
+.prospects details { margin: 12px 0; color: var(--grey-700); }
+.prospects summary { cursor: pointer; font-size: 14px; font-weight: 600; color: var(--blue-600); }
+.prospects summary:hover { color: var(--blue-700); }
+.prospects details[open] > summary { margin-bottom: 8px; }
+.prospects blockquote { margin: 8px 0; padding: 10px 14px; border-left: 3px solid var(--grey-100); background: var(--grey-50); border-radius: 0 8px 8px 0; font-size: 14px; white-space: pre-wrap; }
+
+.prospects .review-actions { margin-top: 20px; }
+.prospects .review-actions span { font-size: 14px; color: var(--grey-700); }
+
+/* Approval bar */
+.prospects .approval-bar { padding: 23px 25px; background: var(--grey-50); border: 1px solid var(--grey-100); border-radius: 12px; margin-top: 28px; }
+.prospects .approval-bar strong { font-size: 17px; font-weight: 700; }
+.prospects .approval-bar p { margin: 4px 0 0; font-size: 14px; }
+
+/* Output studio */
+.prospects .output-form { margin: 24px 0; }
+.prospects fieldset { margin: 16px 0; padding: 12px; border: 1px solid var(--grey-100); border-radius: 12px; }
+.prospects legend { padding: 0 6px; font-size: 14px; font-weight: 600; }
+.prospects .format-option { display: flex; gap: 12px; padding: 12px; border-radius: 10px; font-weight: 400; cursor: pointer; }
+.prospects .format-option:hover { background: var(--grey-50); }
+.prospects .format-option:has(input:checked) { background: var(--blue-50); }
+.prospects .format-option small { display: block; margin-top: 2px; }
+.prospects .output-run { padding: 22px; border: 1px solid var(--grey-100); border-radius: 12px; margin: 12px 0; }
+.prospects .file-list { padding: 0; list-style: none; }
+.prospects .file-list li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--grey-50); }
+.prospects .file-list li:last-child { border-bottom: 0; }
+
+/* Messages */
+.prospects [role=alert] { padding: 18px 22px; background: var(--gold-100); color: var(--gold-700); border-radius: 12px; margin: 0 0 28px; font-size: 15px; }
+.prospects .error-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.prospects .error-banner button { min-height: 36px; padding: 6px 14px; background: var(--grey-0); color: var(--gold-700); border-color: var(--grey-100); font-size: 14px; }
+.prospects .error-banner button:hover:not(:disabled) { background: var(--gold-100); }
+.prospects [role=status] { color: var(--grey-700); }
+.prospects .empty-state { padding: 20px; background: var(--grey-50); border: 1px dashed var(--grey-200); border-radius: 12px; margin: 16px 0; color: var(--grey-700); }
+
+.prospects [hidden] { display: none !important; }
+
+/* Apollo (enrich, contacts, review groups, staff table and Find firms), restyled with the Stalktivity tokens */
+.prospects .find-firms { padding: 29px 33px; background: var(--grey-0); border: 1px solid var(--grey-100); border-radius: 16px; margin-bottom: 28px; }
+.prospects .find-firms form { display: flex; align-items: end; gap: 16px; flex-wrap: wrap; }
+.prospects .find-firms form label { flex: 1; min-width: 14rem; }
+.prospects .staff-table { overflow: auto; margin-bottom: 28px; }
+.prospects table { width: 100%; border-collapse: collapse; font-size: 14px; }
+.prospects th, .prospects td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--grey-100); vertical-align: top; }
+.prospects th { font-weight: 600; color: var(--grey-800); background: var(--grey-50); }
+.prospects .apollo-panel { margin: 0 0 28px; padding: 25px; background: var(--blue-0); border: 1px solid var(--blue-50); border-radius: 12px; }
+.prospects .apollo-panel h3 { margin-bottom: 8px; }
+.prospects .apollo-panel dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0 0 16px; font-size: 14px; }
+.prospects .apollo-panel dt { font-weight: 600; color: var(--grey-800); }
+.prospects .apollo-panel dd { margin: 0; overflow-wrap: anywhere; color: var(--grey-700); }
+.prospects .apollo-search { display: grid; gap: 8px; margin: 0 0 8px; padding: 0; background: none; }
+.prospects .candidate-list, .prospects .apollo-list { list-style: none; padding: 0; margin: 0 0 16px; }
+.prospects .apollo-list li { padding: 22px; background: var(--grey-0); border: 1px solid var(--grey-100); border-radius: 12px; }
+.prospects .apollo-compact { display: flex; flex-wrap: wrap; gap: 8px; }
+.prospects .apollo-compact li { margin: 0; padding: 6px 12px; border-radius: 999px; }
+.prospects .apollo-compact .choice { margin: 0; min-height: 0; }
+.prospects .source-status { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 16px 0; }
+.prospects .source-status > div { padding: 16px; border: 1px solid var(--grey-100); border-radius: 12px; font-size: .85rem; }
+.prospects .source-status span { display: block; color: var(--grey-600); }
+.prospects .reputation-note { padding: 12px; background: #fff0d4; border-radius: 8px; font-size: .85rem; }
+.prospects .stream-preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font: inherit; background: var(--grey-50); padding: 12px; border-radius: 8px; }
+.prospects .file-progress { flex-basis: 100%; max-width: 100%; }
+.prospects progress { height: 8px; accent-color: var(--blue-600); }
+.prospects .connection-status { font-size: .85rem; color: var(--grey-700); }
+
+@media (max-width: 1000px) {
+  .prospects .prospect-grid { grid-template-columns: 300px minmax(0, 1fr); }
+  .prospects .intake { justify-content: flex-start; }
+}
+@media (max-width: 850px) {
+  .prospects { padding: 28px 16px 48px; }
+  .prospects .prospect-grid { grid-template-columns: 1fr; }
+  .prospects .directory { position: static; }
+  .prospects .field-grid { grid-template-columns: 1fr; }
+  .prospects .intake label { flex: 1 1 200px; width: auto; }
+  .prospects .intake h2 { width: 100%; }
+  .prospects .directory, .prospects .workspace, .prospects .intake { padding: 20px; }
+  .prospects-page { background-attachment: scroll; }
+}

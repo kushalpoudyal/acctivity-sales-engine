@@ -4,3 +4,11 @@
 
 # Generated prospect material (repo is public)
 output/
+
+# Local files created when running the project
+.venv/
+__pycache__/
+node_modules/
+dist/
+*.sqlite3
+.DS_Store

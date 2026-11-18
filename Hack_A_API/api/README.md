@@ -9,7 +9,7 @@ with JSON `{}` crawls the firm's public website then starts a paid OpenAI
 extraction; `{"reuse_pages": true}` re-extracts from the saved pages without crawling
 again (still a paid call). Poll the firm detail until `status` is no longer `researching`.
 The crawler respects robots.txt, follows only the firm's domain (and www),
-prioritises staff/about/contact/service pages, and stops at 32 pages, 240,000
+prioritises staff/about/contact/service pages, and stops at 12 pages, 240,000
 text characters or 150 seconds. No login, JavaScript rendering or PDF parsing, so
 sites behind a JavaScript bot challenge (e.g. Cloudflare) return no pages.
 Coverage and skipped pages are shown in the UI. This is bounded research, not a
@@ -58,7 +58,8 @@ connecting a live Acctivity system.
   welcome PDF (`pdf`), optional saved logo and sales instructions. One paid OpenAI
   call writes short copy (titles, summary, proposed opportunities, pilot, next steps,
   demo agenda) from the approved records; `documents.py` then builds each file from
-  our Acctivity brand templates. Each file is validated and saved in SQLite.
+  our Acctivity brand templates. Each file is validated and saved in SQLite, and reports its
+  stage and timings; the streamed copy call shows a live draft.
 
 `POST /api/v1/firms/{id}/outputs` accepts:
 
@@ -81,6 +82,25 @@ The UI shows partial failures and lets the rep prepare a new run for failed
 formats only. Jobs survive page refreshes, but this local single-process
 prototype does not resume interrupted work after a server restart;
 already saved downloads remain available.
+
+### Live streaming and document progress
+
+The browser opens `GET /api/v1/firms/{id}/events` as an SSE connection. It receives
+current firm snapshots as persisted progress changes and heartbeat events when
+idle, with periodic polling retained as a fallback. Reconnecting returns the
+latest saved state; leaving the page does not cancel paid work.
+
+OpenAI Responses calls for web search, structured extraction and new output runs
+use the Python SDK's streaming interface. Search requests explicitly enable
+`tools=[{"type":"web_search"}]`. Draft search text is shown before completion and
+is not an approved finding; final cited results become available per source even
+while other source tasks are running.
+
+Each output file tracks its own stage, timestamps and a bounded preview of the
+streamed copy call (the structured copy as it arrives). The UI uses an
+indeterminate activity indicator with actual stages and elapsed/last-activity
+times. File downloads appear as each file is saved, without waiting for the
+others. Older runs cannot gain event history retroactively.
 
 The shared model defaults to `gpt-6.1-sol`. A selected logo is copied into the job
 so later research cannot change that run's branding; it is used by our templates
@@ -109,13 +129,48 @@ PowerPoint template.
 ### Focused checks
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents
+.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents test_apollo test_find_firms test_apollo_contacts test_apollo_findings test_web_research test_model_stream
 ```
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
 The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`
 overrides the shared default, with `OPENAI_RESEARCH_MODEL` and `OPENAI_DECK_MODEL`
 (the copy call) overriding individual operations. API model access depends on the
 OpenAI account.
+
+### Parallel research sources
+
+Research now runs the website crawl/extraction alongside two optional OpenAI
+`web_search` requests: wider public firm research and public reputation research.
+`POST /api/v1/firms/{id}/research` accepts
+`{"web_search":true,"reputation":true}` (both default on). Disable either in the UI
+or request body to avoid that source's paid model/tool calls. Re-extraction
+(`{"reuse_pages": true}`) runs the website source only, from the saved pages. There are up to
+three simultaneous source tasks, not three serial searches. Each source gets
+its own status, count and error in `research_meta.sources`; one failed search
+does not discard a successful crawl. Partial coverage is marked `needs_review`.
+
+The website source fills the research records (and is the only one that saves logos).
+Search observations are saved in the `web_findings` table with `kind` `web_search` or
+`reputation_search`, their citations and retrieval time; a search that runs replaces that
+kind's earlier findings, while a failed or disabled search keeps them. Approve them by id
+(`"web_findings": [ids]`); approved ones go into the snapshot's `web` list, appear in the
+Word proposal under "From the wider web" or "Public reputation (unverified)", and their
+text (never personal contact data) informs the copy call.
+Reputation observations are not a verified Google review sample and are unchecked
+for approval by default. They must not be presented as verified reviews, ratings,
+testimonials or established firm facts in output material. No Google Maps scraping
+or Google Places API is implemented. Twelve observations are an upper bound, not
+a promise to retrieve twelve reviews.
+
+Research progress records start, last-progress and completion timestamps. The
+website source reports page reading, structured extraction and logo retrieval
+as separate stages. The UI shows elapsed time and when its last API poll succeeded.
+API requests from the browser stop waiting after 15 seconds and offer reconnection;
+that does not cancel a background provider job. OpenAI network timeouts have
+`provider_timeout` errors; malformed structured model output is reported separately.
+The website's OpenAI call has a 180-second network timeout; search calls use 150
+seconds. These are network timeouts, not guarantees of a total end-to-end deadline.
+
 
 Apollo is optional. Without `APOLLO_API_KEY` in `.env` everything above works and the
 firm detail reports `apollo_configured: false` ("Apollo not configured" in the UI).

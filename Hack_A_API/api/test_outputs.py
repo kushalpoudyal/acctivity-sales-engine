@@ -53,6 +53,8 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(write_copy.call_args.args[0]["people"][0]["full_name"], "Jane Smith")
         run = prospects.get_firm(self.firm["id"])["outputs"][0]
         self.assertEqual(run["status"], "ready")
+        self.assertTrue(all(f["stage"] == "Download saved" and f["started_at"] and f["finished_at"]
+                            for f in run["files"]))
         file = next(f for f in run["files"] if f["format"] == "docx")
         data = outputs.download_output(self.firm["id"], job["id"], file["id"]).body
         outputs.validate_document(data, "docx")

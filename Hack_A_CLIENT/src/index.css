@@ -1,9 +1,31 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lora:wght@500;600;700&display=swap');
 
+/* Design tokens from the Stalktivity Figma file */
 :root {
-  font-family: 'DM Sans', sans-serif;
-  color: #233c35;
-  background: #f9faf6;
+  --grey-0: #ffffff;
+  --grey-50: #f4f2f3;
+  --grey-100: #ddd7da;
+  --grey-200: #c0b5bc;
+  --grey-500: #847e80;
+  --grey-600: #747071;
+  --grey-700: #565855;
+  --grey-800: #3d443d;
+  --blue-0: #f6fafc;
+  --blue-50: #ecf4f8;
+  --blue-500: #4396ba;
+  --blue-600: #367895;
+  --blue-700: #285a70;
+  --teal: #4a94a8;
+  --gold-100: #fcf3cd;
+  --gold-700: #917604;
+  --red-50: #faeaea;
+  --red-700: #7a1e1e;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-display: 'Lora', Georgia, serif;
+
+  font-family: var(--font-body);
+  color: var(--grey-800);
+  background: var(--grey-50);
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
@@ -12,12 +34,12 @@
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; }
+body { margin: 0; min-width: 320px; background: var(--grey-50); }
 a { color: inherit; text-decoration: none; }
-button, input { font: inherit; }
+button, input, textarea, select { font: inherit; }
 a, input { -webkit-tap-highlight-color: transparent; }
-:focus-visible { outline: 3px solid #507b59; outline-offset: 5px; }
-::selection { background: #d7ed9b; color: #233c35; }
+:focus-visible { outline: 2px solid var(--blue-500); outline-offset: 2px; }
+::selection { background: var(--blue-50); color: var(--blue-700); }
 h1, h2, p { margin: 0; }
 html { scroll-behavior: smooth; }
 

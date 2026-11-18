@@ -34,6 +34,7 @@ from reportlab.platypus import (BaseDocTemplate, Frame, HRFlowable, Image as Pdf
 
 from decks import DeckError
 from firm_research import RECORD_KINDS
+from model_stream import stream_response
 
 # Brand kit: see brand/BRAND.md.
 BRAND = Path(__file__).with_name("brand")
@@ -63,7 +64,7 @@ class SalesCopy(BaseModel):
     demo_agenda: list[Point] = Field(description="Three or four agenda items for the proposed demo.")
 
 
-def write_copy(snapshot: dict, instructions: str) -> SalesCopy:
+def write_copy(snapshot: dict, instructions: str, progress=None) -> SalesCopy:
     """One paid call: short sales copy from the approved records, which our templates lay out."""
     brief = {"firm": snapshot["firm"], **{
         kind: [{key: value for key, value in record.items() if key not in ("id", "source", "evidence", "rep_edited")}
@@ -73,9 +74,13 @@ def write_copy(snapshot: dict, instructions: str) -> SalesCopy:
                             "keywords": [i["title"] for i in apollo(snapshot, "keywords")],
                             "technologies": [i["title"] for i in apollo(snapshot, "tech stack")],
                             "contacts": [{"full_name": i["person"]["full_name"], "position": i["person"]["position"]}
-                                         for i in apollo(snapshot, "contacts")]}}
+                                         for i in apollo(snapshot, "contacts")]},
+        "web_research": [item["text"] for item in snapshot.get("web", []) if item["kind"] == "web_search"],
+        "reputation_observations": [item["text"] for item in snapshot.get("web", [])
+                                    if item["kind"] == "reputation_search"]}
     with openai.OpenAI(timeout=180, max_retries=0) as client:
-        response = client.responses.parse(
+        response = stream_response(
+            client, progress,
             model=os.getenv("OPENAI_DECK_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-6.1-sol",
             text_format=SalesCopy, max_output_tokens=12000,
             instructions=(
@@ -85,7 +90,9 @@ def write_copy(snapshot: dict, instructions: str) -> SalesCopy:
                 "pricing, product capabilities, statistics or client outcomes; describe Acctivity.ai's role in "
                 "general terms and frame the opportunities, pilot and demo as proposals. apollo_reported comes "
                 "from Apollo's database, not the firm's website: present it as reported, never as confirmed "
-                "(say a technology appears to be in use, not that it is). Tone: warm, plain and "
+                "(say a technology appears to be in use, not that it is). web_research comes from other "
+                "public websites. reputation_observations are unverified attributed observations, not firm "
+                "facts, verified reviews, ratings or testimonials: never present them as such. Tone: warm, plain and "
                 "confident, short sentences, no hype, emoji or exclamation marks. Write every title and heading "
                 "in sentence case (capitalise only the first word and proper nouns). Respect every length limit."
             ),
@@ -136,7 +143,8 @@ def apollo_note(snapshot: dict) -> str | None:
 
 
 def sources(snapshot: dict) -> list[str]:
-    return list(dict.fromkeys(record["source"]["url"] for kind in RECORD_KINDS for record in snapshot[kind]))
+    return list(dict.fromkeys([record["source"]["url"] for kind in RECORD_KINDS for record in snapshot[kind]] +
+                              [source["url"] for item in snapshot.get("web", []) for source in item["sources"]]))
 
 
 def png(data: bytes) -> bytes:
@@ -492,6 +500,19 @@ def render_docx(snapshot: dict, copy: SalesCopy, logo: bytes | None) -> bytes:
                 item = doc.add_paragraph(style="List Bullet")
                 docx_font(item.add_run(label + ": ").font, "Inter", bold=True)
                 item.add_run(", ".join(names))
+
+    for kind, title, note in (
+            ("web_search", "From the wider web", "Cited from public sources other than the firm's website."),
+            ("reputation_search", "Public reputation (unverified)",
+             "Attributed observations from public sources. Not verified reviews, ratings or firm facts.")):
+        items = [item for item in snapshot.get("web", []) if item["kind"] == kind]
+        if items:
+            doc.add_heading(title, 1)
+            paragraph(note, 9.5)
+            for item in items:
+                entry = doc.add_paragraph(style="List Bullet")
+                entry.add_run(clip(item["text"], 500))
+                docx_font(entry.add_run("  " + ", ".join(s["title"] for s in item["sources"])).font, "Inter", 8.5)
 
     doc.add_heading("Where Acctivity.ai could help", 1)
     paragraph("Proposed for discussion with your team.", 9.5)

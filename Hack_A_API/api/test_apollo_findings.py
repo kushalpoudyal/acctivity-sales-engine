@@ -40,7 +40,7 @@ class ApolloFindingTests(unittest.TestCase):
         with patch("prospects.crawl_site", return_value=([PAGE], [])), \
                 patch("prospects.extract_profile", return_value=(records_with(*people), 0)), \
                 patch("prospects.openai.OpenAI"):
-            prospects.research(firm_id, "firm.example")
+            prospects.research(firm_id, "firm.example", prospects.ResearchOptions(web_search=False, reputation=False))
 
     def reveal(self, firm_id, *matches):
         with ScriptedApollo((200, {"matches": list(matches)})):

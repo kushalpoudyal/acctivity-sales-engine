@@ -60,11 +60,12 @@ class ResearchRecordTests(unittest.TestCase):
         prospects.initialize()
         self.firm = prospects.add_firm(prospects.Intake(website="firm.example"))
 
-    def research(self, **kwargs):
+    def research(self, reuse_pages=False):
         with patch("prospects.crawl_site", return_value=(PAGES, [])) as crawl, patch(
             "prospects.extract_profile", return_value=(RECORDS, 0)
         ) as extract, patch("prospects.openai.OpenAI"):
-            prospects.research(self.firm["id"], "firm.example", **kwargs)
+            prospects.research(self.firm["id"], "firm.example", prospects.ResearchOptions(
+                web_search=False, reputation=False, reuse_pages=reuse_pages))
         return crawl, extract
 
     def test_research_is_stored_as_linked_records_and_approval_freezes_them(self):

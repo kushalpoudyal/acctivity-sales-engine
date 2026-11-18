@@ -97,9 +97,10 @@ class TemplateTests(unittest.TestCase):
     def test_copy_call_gets_apollo_names_but_no_emails_or_links(self):
         with patch("documents.openai.OpenAI") as factory:
             client = factory.return_value.__enter__.return_value
-            client.responses.parse.return_value = Record(status="completed", output_parsed=COPY)
+            stream = client.responses.stream.return_value.__enter__.return_value
+            stream.get_final_response.return_value = Record(status="completed", output_parsed=COPY)
             documents.write_copy(APOLLO_SNAPSHOT, "")
-        sent = client.responses.parse.call_args.kwargs["input"]
+        sent = client.responses.stream.call_args.kwargs["input"]
         self.assertIn("Xero", sent)
         self.assertIn("Ann Apollo", sent)
         self.assertNotIn("@firm.example", sent)

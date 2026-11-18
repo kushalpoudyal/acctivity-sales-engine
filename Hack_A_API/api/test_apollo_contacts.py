@@ -62,7 +62,8 @@ class ContactTests(unittest.TestCase):
         with patch("prospects.crawl_site", return_value=([PAGE], [])), \
                 patch("prospects.extract_profile", return_value=(records_with(*people), 0)), \
                 patch("prospects.openai.OpenAI"):
-            prospects.research(firm_id, "firm.example")
+            prospects.research(firm_id, "firm.example",
+                               prospects.ResearchOptions(web_search=False, reputation=False))
 
     def contacts(self, firm_id):
         return prospects.get_firm(firm_id)["apollo_contacts"]

@@ -12,10 +12,12 @@ from urllib.parse import urljoin, urlsplit, urlunsplit
 from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
+
+from model_stream import stream_response
 
 AGENT = "AcctivityResearch"
-MAX_PAGES = 32
+MAX_PAGES = 12
 MAX_CHARACTERS = 240_000
 
 
@@ -287,8 +289,17 @@ def grounded_profile(profile: FirmProfile, pages: list[dict]) -> tuple[dict[str,
     return records, rejected
 
 
-def extract_profile(client, model: str, pages: list[dict]) -> tuple[dict[str, list[dict]], int]:
-    response = client.responses.parse(
+def extract_profile(client, model: str, pages: list[dict], progress=None) -> tuple[dict[str, list[dict]], int]:
+    characters = 0
+
+    def report(stage, delta):
+        nonlocal characters
+        characters += len(delta or "")
+        if progress:
+            progress(stage="Extracting structured firm data", characters=characters)
+
+    try:
+        response = stream_response(client, report,
         model=model, text_format=FirmProfile, max_output_tokens=14000,
         instructions=(
             "Extract a structured sales-research profile of the law firm from the supplied website pages. "
@@ -308,8 +319,16 @@ def extract_profile(client, model: str, pages: list[dict]) -> tuple[dict[str, li
             "Omit unsupported details, duplicates, unknowns and sales speculation. Do not equate years of "
             "combined experience or a lawyer's admission date with firm age. Do not infer total headcount."
         ),
-        input=json.dumps(pages),
-    )
+            input=json.dumps(pages),
+        )
+    except ValidationError as exc:
+        locations = ["/".join(map(str, error["loc"])) + ": " + error["type"]
+                     for error in exc.errors(include_input=False, include_url=False)]
+        logging.error("Firm profile validation failed: %s", "; ".join(locations[:5]))
+        raise ResearchError(
+            "OpenAI returned invalid structured firm data. The website was read, but extraction "
+            "could not be validated. Try a new research run."
+        ) from exc
     if response.status != "completed" or response.output_parsed is None:
         raise ResearchError("OpenAI did not return a complete firm profile. Retry or select a suitable model.")
     return grounded_profile(response.output_parsed, pages)
