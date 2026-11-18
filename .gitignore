@@ -1,0 +1,6 @@
+# Secrets
+.env
+.env.*
+
+# Generated prospect material (repo is public)
+output/
