@@ -1,16 +1,19 @@
 import asyncio
+import json
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 from uuid import uuid4
+from threading import Barrier
 
 from fastapi import BackgroundTasks, HTTPException
 
 import outputs
 import prospects
 from test_documents import COPY
+from documents import RENDERERS
 from test_prospects import PAGES, RECORDS
 
 
@@ -45,12 +48,17 @@ class OutputTests(unittest.TestCase):
             outputs.create_outputs(self.firm["id"] + 1, self.request_body(), BackgroundTasks())
         self.assertEqual(wrong_firm.exception.status_code, 404)
 
-    def test_outputs_are_built_from_templates_and_survive_restart(self):
+    def test_outputs_are_built_in_sandboxes_and_survive_restart(self):
         tasks = BackgroundTasks()
         job = outputs.create_outputs(self.firm["id"], self.request_body(), tasks)
-        with patch("outputs.write_copy", return_value=COPY) as write_copy:
+        def build(job, format, bundle, progress):
+            progress("Uploading brand kit", "cntr-" + format)
+            self.assertTrue(bundle.startswith(b"PK"))
+            return RENDERERS[format](json.loads(job["snapshot"]), COPY, None)
+
+        with patch("outputs.build_document", side_effect=build) as generate:
             asyncio.run(tasks())
-        self.assertEqual(write_copy.call_args.args[0]["people"][0]["full_name"], "Jane Smith")
+        self.assertEqual(json.loads(generate.call_args.args[0]["snapshot"])["people"][0]["full_name"], "Jane Smith")
         run = prospects.get_firm(self.firm["id"])["outputs"][0]
         self.assertEqual(run["status"], "ready")
         self.assertTrue(all(f["stage"] == "Download saved" and f["started_at"] and f["finished_at"]
@@ -63,18 +71,24 @@ class OutputTests(unittest.TestCase):
         prospects.initialize()
         self.assertEqual(outputs.download_output(self.firm["id"], job["id"], file["id"]).body, data)
 
-    def test_one_failing_template_keeps_the_other_formats(self):
+    def test_one_failing_sandbox_keeps_the_other_formats(self):
         tasks = BackgroundTasks()
         outputs.create_outputs(self.firm["id"], self.request_body(), tasks)
-        with patch("outputs.write_copy", return_value=COPY), patch.dict(
-            outputs.RENDERERS, {"pdf": Mock(side_effect=RuntimeError("template bug"))}
-        ), self.assertLogs(level="ERROR"):
+        barrier = Barrier(2)
+
+        def build(job, format, bundle, progress):
+            barrier.wait(timeout=3)
+            if format == "pdf":
+                raise outputs.DeckError("PDF sandbox failure")
+            return RENDERERS[format](json.loads(job["snapshot"]), COPY, None)
+
+        with patch("outputs.build_document", side_effect=build), self.assertLogs(level="ERROR"):
             asyncio.run(tasks())
         run = prospects.get_firm(self.firm["id"])["outputs"][0]
         self.assertEqual(run["status"], "partial")
         pdf = next(f for f in run["files"] if f["format"] == "pdf")
         self.assertEqual(pdf["status"], "failed")
-        self.assertIn("Could not build the PDF", pdf["error"])
+        self.assertIn("PDF sandbox failure", pdf["error"])
 
     def test_provider_failure_has_terminal_job_and_file_states(self):
         tasks = BackgroundTasks()

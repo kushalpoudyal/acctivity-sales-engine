@@ -21,6 +21,17 @@ Completed research shows a fixed total duration and finish time, not live API or
 progress-age counters. Live timers and the started notice appear only while a
 research job is active. Refreshing or reconnecting never starts a paid run.
 
+Output submission uses `crypto.getRandomValues` for UUID request keys, so it
+works on plain-HTTP internal network addresses as well as localhost/HTTPS.
+The output tab uploads approved data and branding to a separate OpenAI sandbox
+per document; each sandbox/model request is billed separately.
+
+Research source checkboxes map directly to one research request (`website`,
+`web_search`, `reputation`, `apollo`). Only selected sources run and appear in
+results; hidden stored records are retained but are not approved automatically.
+Apollo enrichment/contact discovery runs with the other selected sources, not
+as a separate browser request. Paid email reveals remain explicit.
+
 Open `/sales-studio.html` on the dev server for a separate, clickable sales-engine
 mockup: browse firms, add one with optional Apollo enrichment, then simulate
 research and sandbox output generation. It uses fictional data, makes no API
