@@ -1,0 +1,32 @@
+# Local development: API + React client with live reload.
+#   docker compose up --build
+# Client: http://localhost:5173   API: http://localhost:9001 (docs at /docs)
+
+services:
+  api:
+    build: ./Hack_A_API/api
+    command: uvicorn main:app --host 0.0.0.0 --port 9001 --reload
+    ports:
+      - "9001:9001"
+    env_file:
+      - path: ./Hack_A_API/api/.env
+        required: false
+    environment:
+      # File-change events don't cross a Windows/macOS bind mount; poll instead.
+      WATCHFILES_FORCE_POLLING: "true"
+    volumes:
+      - ./Hack_A_API/api:/app
+
+  client:
+    build: ./Hack_A_CLIENT
+    ports:
+      - "5173:5173"
+    environment:
+      API_URL: http://api:9001
+      VITE_USE_POLLING: "true"
+    volumes:
+      - ./Hack_A_CLIENT:/app
+      # Keep the container's Linux node_modules instead of the host's.
+      - /app/node_modules
+    depends_on:
+      - api
