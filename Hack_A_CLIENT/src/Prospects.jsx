@@ -100,12 +100,13 @@ export default function Prospects() {
 function FirmWorkspace({ detail, busy, dirty, mutate, onDirty }) {
   const [tab, setTab] = useState('research')
   const [approvalId, setApprovalId] = useState(null)
-  async function approve(indices) {
-    const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, findings: indices })
+  // Approval sends the ticked website findings (brief indices) and the ticked Apollo finding keys.
+  async function approve(indices, apolloKeys) {
+    const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, findings: indices, apollo_findings: apolloKeys })
     if (result) { setApprovalId(result.id); setTab('outputs') }
   }
   const submit = (path, body) => mutate(`/${detail.id}/${path}`, body)
-  // Apollo actions wait for saved research edits and finished research.
+  // Apollo changes the review token, which resets the research editor, so Apollo actions wait for saved edits.
   const apolloBusy = busy || dirty || detail.status === 'researching'
   const apollo = <>
     <ApolloPanel detail={detail} busy={apolloBusy} submit={submit} />
@@ -134,6 +135,8 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
   const [logoId, setLogoId] = useState(detail.preferred_logo_id ?? '')
   const [findings, setFindings] = useState(detail.brief)
   const [selected, setSelected] = useState(detail.brief.map((_, i) => i))
+  const [apolloSelected, setApolloSelected] = useState((detail.apollo_findings || []).map(item => item.key))
+  const count = selected.length + apolloSelected.length
   const [notice, setNotice] = useState('')
   const dirty = name !== detail.name || String(logoId) !== String(detail.preferred_logo_id ?? '') ||
     JSON.stringify(findings) !== JSON.stringify(detail.brief)
@@ -206,8 +209,11 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
       <div className="review-actions"><button disabled={locked || !dirty}>Save research edits</button>
         <span role="status">{dirty ? 'Unsaved edits — save before approving or re-running research.' : 'All edits saved.'}</span></div>
     </form>
-    <div className="approval-bar"><div><strong>{selected.length} findings selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
-      <button disabled={locked || dirty || !selected.length} onClick={() => approve(selected)}>Approve &amp; create outputs →</button></div>
+    {detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
+      <small>From Apollo's database, not the firm's website. Not editable; untick anything that looks wrong.</small></div>}
+    <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />
+    <div className="approval-bar"><div><strong>{count} {count === 1 ? 'finding' : 'findings'} selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
+      <button disabled={locked || dirty || !count} onClick={() => approve(selected, apolloSelected)}>Approve &amp; create outputs →</button></div>
   </>
 }
 
@@ -221,7 +227,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
   const selectedId = approvalId ?? detail.proposals[0]?.id ?? ''
   const approval = detail.proposals.find(p => p.id === Number(selectedId))
   const olderApproval = approval && (approval.snapshot.firm !== detail.name ||
-    approval.snapshot.findings.some(f => !detail.brief.some(current => JSON.stringify(current) === JSON.stringify(f))))
+    approval.snapshot.findings.some(f => ![...detail.brief, ...(detail.apollo_findings || [])].some(current => JSON.stringify(current) === JSON.stringify(f))))
   const running = detail.outputs.some(job => ['queued', 'running'].includes(job.status))
   async function generate(event) {
     event.preventDefault()
@@ -361,4 +367,27 @@ function StaffRecords({ detail }) {
       <tbody>{detail.staff.map(person => <tr key={person.id}><td>{person.full_name}</td><td>{person.position || 'Not published'}</td>
         <td>{[person.public_work_email, person.public_work_phone].filter(Boolean).join(' · ') || 'Not published'}</td>
         <td><ApolloContact person={person} /></td></tr>)}</tbody></table></div></div>
+}
+
+// Apollo findings: no website passage; each shows "Source: Apollo, retrieved <date>". Long lists (tech stack,
+// keywords) render as compact checkboxes with a per-group Select all / Clear all.
+function ApolloReview({ items, selected, setSelected }) {
+  const categories = [...new Set(items.map(item => item.category))]
+  return categories.map(category => {
+    const group = items.filter(item => item.category === category)
+    const keys = group.map(item => item.key)
+    const chosen = keys.filter(k => selected.includes(k)).length
+    const contacts = category === 'Apollo: contacts'
+    return <div key={category}><h3>{category} <small>({chosen} of {group.length} selected)</small></h3>
+      <p><small>{group[0].sources[0].title}. From Apollo's database, not the firm's website.
+        {category === 'Apollo: tech stack' && ' Apollo mostly reports web and IT tools (CDN, analytics, Microsoft 365), not practice-management software. Untick anything that looks wrong.'}</small>
+        {' '}<button type="button" onClick={() => setSelected(chosen < group.length ? [...new Set([...selected, ...keys])] : selected.filter(k => !keys.includes(k)))}>
+          {chosen < group.length ? 'Select all' : 'Clear all'}</button></p>
+      <ul className={contacts ? 'apollo-list' : 'apollo-list apollo-compact'}>{group.map(item => <li key={item.key}>
+        <label className="choice"><input type="checkbox" checked={selected.includes(item.key)}
+          onChange={e => setSelected(e.target.checked ? [...selected, item.key] : selected.filter(k => k !== item.key))} />
+          <span title={contacts ? undefined : item.text}>{contacts ? <><strong>{item.title}<br /></strong>{item.text}</> : item.title}</span></label>
+        {contacts && item.person?.linkedin_url && <div><a href={item.person.linkedin_url} target="_blank" rel="noreferrer">LinkedIn ↗</a></div>}
+      </li>)}</ul></div>
+  })
 }

@@ -105,6 +105,16 @@ Revealed people merge into `staff` by name (case-insensitive): `source` is `webs
 `apollo` or `both`; Apollo fills `apollo_email`, `email_status`, `linkedin_url`,
 `match_confidence`. Re-running research replaces only website-only staff rows.
 
+Apollo findings: the firm detail's `apollo_findings` turns the stored Apollo data into
+reviewable findings (`apollo_findings.py`): one per industry, keyword and technology, and one
+per revealed contact (email, LinkedIn). Each has a stable `key` (e.g. `apollo:tech:cloudflare`,
+`apollo:contact:<apollo id>`), `source: "Apollo"`, `retrieved_at` (enrich or reveal date), a
+"Source: Apollo, retrieved …" source label and no evidence passage. Approve with
+`{"brief_token", "findings": [website indices], "apollo_findings": [keys]}`; only the selected
+ones are appended to the snapshot, so the demo export and deck see nothing that was unticked.
+`brief_token` also covers the Apollo findings (a new enrich or reveal asks for a fresh review);
+without Apollo data it is the brief digest, as before.
+
 This single-process local prototype uses the ignored `prospects.sqlite3` database
 next to the API. A restart marks interrupted searches failed, without automatic
 paid retries. Keep both dev servers on loopback; there is no user authentication yet.
