@@ -20,4 +20,7 @@
 .prospects th,.prospects td{padding:.5rem;text-align:left;border-bottom:1px solid #d5dfd8}
 .prospects .firm-logo{max-width:220px;max-height:100px;object-fit:contain;background:#eef0ee;padding:8px}
 .prospects figure{margin:1rem 0}.prospects figcaption a,.prospects a[download]{text-decoration:underline}
+.prospects .apollo-panel{margin:1rem 0;padding:1rem;background:#f3f7f4;border-radius:8px}
+.prospects .apollo-panel dl{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1rem;margin:0 0 1rem;font-size:.88rem}
+.prospects .apollo-panel dt{font-weight:600}.prospects .apollo-panel dd{margin:0;overflow-wrap:anywhere}
 @media(max-width:700px){.prospect-grid{grid-template-columns:1fr}}

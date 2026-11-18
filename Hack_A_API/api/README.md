@@ -39,6 +39,13 @@ in a private OpenAI Code Interpreter container and saves the validated `.pptx`
 in local SQLite before offering a download. A failed build can be retried without
 re-running research. Set `OPENAI_DECK_MODEL` to override the build model.
 
+Apollo is optional. Without `APOLLO_API_KEY` in `.env` everything above works and the
+firm detail reports `apollo_configured: false` ("Apollo not configured" in the UI).
+With a key, `POST /api/v1/firms/{id}/apollo/enrich` spends **1 Apollo credit** to store
+the firm's Apollo organization (headcount, industries, tech stack) in `firms.apollo_org`;
+enriching again requires `{"refresh": true}`. `apollo.py` is the client (no retries; the
+key is sent only to Apollo). Tests mock HTTP and never spend credits.
+
 This single-process local prototype uses the ignored `prospects.sqlite3` database
 next to the API. A restart marks interrupted searches failed, without automatic
 paid retries. Keep both dev servers on loopback; there is no user authentication yet.

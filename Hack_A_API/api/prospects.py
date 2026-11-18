@@ -7,6 +7,7 @@ from contextlib import closing, contextmanager
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import apollo
 import openai
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Response
 from decks import DeckError, generate_deck
@@ -33,9 +34,11 @@ def initialize():
         db.execute("""UPDATE firms SET status='failed', error='Research interrupted. Run it again.'
                       WHERE status='researching'""")
         columns = {row["name"] for row in db.execute("PRAGMA table_info(firms)")}
-        for column, default in [("research_meta", "'{}'"), ("research_pages", "'[]'")]:
+        for column, definition in [("research_meta", "TEXT NOT NULL DEFAULT '{}'"),
+                                   ("research_pages", "TEXT NOT NULL DEFAULT '[]'"),
+                                   ("apollo_org", "TEXT"), ("apollo_enriched_at", "TEXT")]:
             if column not in columns:
-                db.execute(f"ALTER TABLE firms ADD COLUMN {column} TEXT NOT NULL DEFAULT {default}")
+                db.execute(f"ALTER TABLE firms ADD COLUMN {column} {definition}")
         db.execute("""CREATE TABLE IF NOT EXISTS proposals (
             id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL, digest TEXT NOT NULL,
             snapshot TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'approved',
@@ -94,8 +97,35 @@ def get_firm(firm_id: int):
     values = dict(row)
     values.pop("research_pages")
     return {**values, "research_meta": json.loads(row["research_meta"]),
+            "apollo_org": json.loads(row["apollo_org"]) if row["apollo_org"] else None,
+            "apollo_configured": apollo.configured(),
             "brief": json.loads(row["brief"]), "brief_token": digest(row["brief"]),
             "proposals": proposals, "staff": staff, "brand_assets": assets}
+
+
+class ApolloEnrich(BaseModel):
+    refresh: bool = False
+
+
+@router.post("/{firm_id}/apollo/enrich")
+def apollo_enrich(firm_id: int, body: ApolloEnrich | None = None):
+    """Apollo organization enrichment: spends 1 credit. Re-enriching needs {"refresh": true}."""
+    firm = get_firm(firm_id)
+    if not firm["apollo_configured"]:
+        raise HTTPException(503, apollo.NOT_CONFIGURED)
+    if firm["apollo_org"] is not None and not (body and body.refresh):
+        raise HTTPException(409, f"Already enriched on {firm['apollo_enriched_at']} UTC. "
+                                 'Send {"refresh": true} to spend 1 more credit.')
+    try:
+        org = apollo.enrich_org(firm["domain"])
+    except apollo.ApolloError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from None
+    if not org:
+        raise HTTPException(404, f"Apollo has no organization for {firm['domain']}.")
+    with database() as db:
+        db.execute("UPDATE firms SET apollo_org=?, apollo_enriched_at=CURRENT_TIMESTAMP WHERE id=?",
+                   (json.dumps(org), firm_id))
+    return get_firm(firm_id)
 
 
 @router.get("/{firm_id}/brand-assets/{asset_id}")

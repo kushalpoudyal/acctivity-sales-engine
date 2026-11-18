@@ -56,7 +56,7 @@ export default function Prospects() {
     } catch (e) { setError(e.message) } finally { setBusy(false) }
   }
   const matches = firms.filter(f => (f.name + ' ' + f.domain).toLowerCase().includes(query.toLowerCase()))
-  async function submitProposal(path, body) {
+  async function submit(path, body) {
     setBusy(true); setError('')
     try {
       await request(`/${id}/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
@@ -77,6 +77,7 @@ export default function Prospects() {
       {detail.research_meta?.pages_read > 0 && <p>{detail.status === 'researching' ? detail.research_meta.stage : 'Website research'} · {detail.research_meta.pages_read} pages read</p>}
       {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
       {detail.error && <p role="alert">{detail.error}</p>}
+      <ApolloPanel detail={detail} busy={busy} submit={submit} />
       {detail.brief.length > 0 && !detail.research_meta?.pages_read && <p>This brief used the earlier quick search. Run website research again to populate detailed staff records and saved logos.</p>}
       {detail.staff?.length > 0 && <div><h3>Staff records ({detail.staff.length})</h3>
         <p>Public website records saved for demo preparation. These are not active Acctivity accounts.</p>
@@ -88,14 +89,35 @@ export default function Prospects() {
         {detail.brand_assets.map(asset => <figure key={asset.id}><img className="firm-logo" alt={`${detail.name} published logo`}
           src={`${base}/${id}/brand-assets/${asset.id}`} /><figcaption><a href={`${base}/${id}/brand-assets/${asset.id}`} download>Download logo</a>
           {' · '}<a href={asset.source_url} target="_blank" rel="noreferrer">Website source</a></figcaption></figure>)}</div>}
-      {detail.brief.length > 0 && <BriefReview key={`${id}:${detail.brief_token}`} detail={detail} busy={busy} submit={submitProposal} />}
+      {detail.brief.length > 0 && <BriefReview key={`${id}:${detail.brief_token}`} detail={detail} busy={busy} submit={submit} />}
       {detail.proposals?.map(p => <div key={p.id}><h3>Approved brief #{p.id}</h3>
         <p><a href={`${base}/${id}/proposals/${p.id}/demo-export`}>Download approved firm and staff data (JSON)</a></p>
         {p.status === 'ready' ? <a href={`${base}/${id}/proposals/${p.id}/download`}>Download PowerPoint (.pptx)</a> :
           <><p>{p.error || (p.status === 'building' ? 'Building PowerPoint in the OpenAI container…' : 'Approval saved. Generating a PowerPoint uses OpenAI credits.')}</p>
-            <button disabled={busy || p.status === 'building'} onClick={() => submitProposal(`proposals/${p.id}/build`, {})}>{p.status === 'failed' ? 'Retry PowerPoint' : 'Generate PowerPoint'}</button></>}</div>)}
+            <button disabled={busy || p.status === 'building'} onClick={() => submit(`proposals/${p.id}/build`, {})}>{p.status === 'failed' ? 'Retry PowerPoint' : 'Generate PowerPoint'}</button></>}</div>)}
     </> : <><h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm to see its research and sources.'}</p></>}</section></div>
   </main>
+}
+
+function ApolloPanel({ detail, busy, submit }) {
+  const org = detail.apollo_org
+  if (!detail.apollo_configured) return <div className="apollo-panel"><h3>Apollo</h3>
+    <p>Apollo not configured. Add <code>APOLLO_API_KEY</code> to the server <code>.env</code> to enrich firms from Apollo.</p></div>
+  const tech = org?.technology_names?.length ? org.technology_names : (org?.current_technologies || []).map(t => t.name)
+  const industries = org?.industries?.length ? org.industries : [org?.industry].filter(Boolean)
+  return <div className="apollo-panel"><h3>Apollo</h3>
+    {org ? <>
+      <p>Enriched on {detail.apollo_enriched_at?.slice(0, 10)} · {org.name}</p>
+      <dl>
+        <dt>Headcount</dt><dd>{org.estimated_num_employees ?? 'Not listed'}</dd>
+        <dt>Industries</dt><dd>{industries.join(', ') || 'Not listed'}</dd>
+        <dt>Tech stack ({tech.length})</dt><dd>{tech.join(', ') || 'Not listed'}</dd>
+      </dl>
+      <button disabled={busy} onClick={() => submit('apollo/enrich', { refresh: true })}>Refresh enrichment (1 credit)</button>
+    </> : <>
+      <p>Look up this firm's headcount, industries and technology in Apollo. Uses 1 Apollo credit.</p>
+      <button disabled={busy} onClick={() => submit('apollo/enrich', {})}>Enrich firm (1 credit)</button>
+    </>}</div>
 }
 
 function BriefReview({ detail, busy, submit }) {
