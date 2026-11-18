@@ -58,9 +58,9 @@ Decisions and progress go in `LOG.md` (append-only).
 - Q3: input shape: website URL only (per brief), or also a name/LinkedIn/CSV list?
 - Q4: does "tailored demo environment" (in the brief) stay in scope?
 - Q5: LLM provider / image generation / slide-deck tool. Video candidate: **Sendspark** (see `SENDSPARK.md`)
-- Q6: build approach 1 first with Apollo optional, or go straight to Apollo?
+- Q6: ~~approach 1 first or straight to Apollo?~~ answered 18/11: Apollo is an optional add-on (enrich + find firms), click-to-spend. Plan in LOG.md; issues #3–#7.
 
 ## Tools researched
 
 - **Sendspark** (videos): `SENDSPARK.md`. API + webhooks on Growth ($99/mo); fills variables into one recorded base video; async, poll or webhook.
-- **Apollo** (input approach 2): `APOLLO.md`. Org enrich (1 credit) → people search (free, names obfuscated) → people match (1 credit email, +8 mobile).
+- **Apollo** (input approach 2): `APOLLO.md`. Org enrich (1 credit) → people search (free, names obfuscated) → people match (1 credit email, +8 mobile). Firm search: 1 credit/page. Probe: `Hack_A_API/api/apollo_probe.py`.
