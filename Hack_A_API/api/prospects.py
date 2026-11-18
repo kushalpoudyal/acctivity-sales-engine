@@ -134,6 +134,11 @@ def initialize():
             id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, format TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'queued', error TEXT, content BLOB,
             UNIQUE(job_id,format))""")
+        # One demo plan per firm (demo_plan.py): the JSON plan the seeder writes, built from an approval.
+        db.execute("""CREATE TABLE IF NOT EXISTS demo_plans (
+            firm_id INTEGER PRIMARY KEY REFERENCES firms(id), approval_id INTEGER NOT NULL,
+            plan TEXT NOT NULL, errors TEXT NOT NULL DEFAULT '[]', edited INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
         file_columns = {row["name"] for row in db.execute("PRAGMA table_info(output_files)")}
         for column, definition in [
             ("stage", "TEXT NOT NULL DEFAULT 'Queued'"), ("container_id", "TEXT"),
