@@ -152,6 +152,14 @@
 /* Findings */
 .prospects .choice { display: flex; gap: 12px; align-items: center; min-height: 40px; margin: 0; font-size: 15px; font-weight: 400; }
 .prospects .category-heading { padding-top: 16px; margin-top: 12px; border-top: 1px solid var(--grey-100); font-family: var(--font-display); font-size: 20px; }
+/* Collapsible record categories (Practice areas, People, Offices, Firm facts) */
+.prospects .record-category { margin: 0; color: inherit; }
+.prospects .record-category > summary { list-style: none; }
+.prospects .record-category > summary::-webkit-details-marker { display: none; }
+.prospects .record-category > summary .category-heading { display: flex; align-items: center; gap: 10px; }
+.prospects .record-category > summary .category-heading::before { content: ""; width: 8px; height: 8px; margin: 0 4px 0 2px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
+.prospects .record-category[open] > summary .category-heading::before { transform: rotate(45deg); }
+.prospects .record-category > summary:hover .category-heading { color: var(--blue-700); }
 .prospects .finding-card { background: var(--grey-0); border: 1px solid var(--grey-100); border-radius: 12px; padding: 22px; margin: 12px 0; }
 .prospects .finding-card .choice { margin-bottom: 10px; }
 .prospects .finding-card .badge { margin-top: 4px; }

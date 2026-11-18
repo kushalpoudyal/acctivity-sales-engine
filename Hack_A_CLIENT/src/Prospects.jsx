@@ -267,7 +267,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
       {!detail.brand_assets.length && <p>No logo saved. Research will try to collect a published website logo.</p>}
       <div className="section-title"><h3>Review and edit research records</h3><small>Each record keeps its source page. Your corrections are labelled as rep edits.</small></div>
       {!total && <p>Run website research to populate the firm's practice areas, people, offices and facts.</p>}
-      {total > 0 && recordKinds.map(([kind, title]) => <div key={kind}><h3 className="category-heading">{title} <span className="badge">{records[kind].length}</span></h3>
+      {total > 0 && recordKinds.map(([kind, title]) => <details key={kind} className="record-category"><summary><h3 className="category-heading">{title} <span className="badge">{records[kind].length}</span></h3></summary>
         {!records[kind].length && <p className="muted">None found on the website.</p>}
         <div className="finding-list">{records[kind].map(record => <article className="finding-card" key={record.id}>
           <label className="choice"><input type="checkbox" checked={selected[kind].includes(record.id)} disabled={locked}
@@ -287,7 +287,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
           {record.original && <span className="badge">Rep edited · the source shows the original website record</span>}
           <div className="source-links"><a href={record.source.url} target="_blank" rel="noreferrer">{record.source.title || 'Website source'} ↗</a></div>
           <details><summary>Original supporting passage</summary><blockquote>{record.evidence}</blockquote></details>
-        </article>)}</div></div>)}
+        </article>)}</div></details>)}
       <div className="review-actions"><button disabled={locked || !dirty}>Save research edits</button>
         <span role="status">{dirty ? 'Unsaved edits — save before approving or re-running research.' : 'All edits saved.'}</span></div>
     </form>
