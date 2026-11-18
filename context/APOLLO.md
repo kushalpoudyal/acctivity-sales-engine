@@ -1,6 +1,6 @@
 # Apollo: enrichment for input approach 2
 
-Researched 18/11 from Apollo's docs. Nothing built or tested yet.
+Researched 18/11 from Apollo's docs; probed against the live API 18/11 (answers under "Unknowns to probe").
 
 ## Verdict
 
@@ -62,14 +62,48 @@ Returns `email`, `email_status`, `linkedin_url`, `title`, `employment_history`, 
 
 ## Unknowns to probe
 
+**Answered by the probe run on 2026-11-18** (`apollo_probe.py`, our key, run once, **4 credits** spent).
+The firms came from Apollo's own firm search (keywords "law firm"/"legal"/"lawyers", NZ + AU, 5–200 staff),
+and the probe checked the first 3 domains. Only aggregates are recorded here (public repo).
+
 1. Does a Free account (work email) actually allow these 3 endpoints, or do we need Basic?
+   - **Answer:** our plan **allows** firm search (`mixed_companies/search`), org enrich
+     (`organizations/enrich`) and people search (`mixed_people/api_search`). None returned a 403.
+     The probe did **not call** bulk match (`people/bulk_match`) because no candidate came back, so it is still unconfirmed.
 2. Coverage of NZ/AU law firms and their partners (`match_confidence`, `has_email` rates).
+   - **Answer (thin, n=3):** firm search reports ~11.9k matches, but 2 of the first 3 were **legal
+     recruiters**, not law firms (industry "staffing & recruiting" / "human resources"). NAICS 5411 doesn't
+     exclude them (23 of 25 search results had it), so filter on the enriched industry `law practice` /
+     `legal services`. Enrich matched **3/3** domains (all AU; none of the 3 was NZ).
+     The people search by title (Managing Partner, Partner, Practice Manager, General Manager, Operations Manager,
+     Finance Manager, CFO) returned **0 people at all 3 firms**. So the `has_email` rate, `match_confidence`
+     and `email_status` were **not measured**. Apollo has few people at small AU firms: the per-firm totals
+     for any single seniority were 0–9.
 3. Does `technology_names` include legal software (practice management, accounting, e.g. what Acctivity
    would replace), or only website tech (analytics, CMS, Microsoft 365)? This decides whether the
    "technology they already use" pitch works.
+   - **Answer:** **website and IT tech only.** Each firm had 41–58 technologies: CDN, analytics, tag manager,
+     WordPress plugins, HubSpot, Microsoft 365/Exchange, Google Workspace and AWS. None of the 3 showed
+     practice-management, legal or accounting software (LEAP, Actionstep, Clio, Smokeball, Xero, MYOB, etc.).
+     So the "technology they already use" pitch can only mention their office and web tools, not legal software.
 4. Exact `person_seniorities` values (e.g. whether `partner` is one).
+   - **Answer:** Apollo accepted all 8 values we tried (no 400): `owner`, `founder`, `c_suite`, `partner`, `vp`,
+     `head`, `director`, `manager`. Only `head`, `director`, `manager` and `founder` returned anyone.
+     `partner` returned 0 at all 3 firms (one was a real law practice), so it is **accepted but unproven**.
+     Don't rely on it alone. Combine it with `director`/`founder`/`owner`.
+5. (Issue #3) Which fields do firm-search results carry?
+   - **Answer:** `id`, `name`, `primary_domain`, `website_url`, `linkedin_url`, `phone`/`primary_phone`,
+     `naics_codes`, `sic_codes`, `founded_year`, `organization_revenue`(`_printed`), headcount growth
+     (6/12/24 months), `languages`, social URLs, `logo_url`, `publicly_traded_*`, `owned_by_*`, intent flags.
+     Search results have **no employee count, industry or location**: `estimated_num_employees` is absent
+     (`None` for all 10 shown). Those come from enrich (1 credit each).
 
-**Cheap probe:** sign up with a work email, create a scoped key, and with curl run calls 1 → 2 → 3 on 2–3 real NZ firm
+**What this means for the build:** "Find firms" (#6) can ship because firm search is allowed, but it needs a
+law-practice filter to drop recruiters. Contacts (#5) should fall back to staff found on the firm's website,
+because Apollo's people search often finds no partners at small AU firms. Email reveal (`bulk_match`) needs
+one real test before we rely on it.
+
+**Cheap probe (original plan, done 18/11 via `apollo_probe.py`):** sign up with a work email, create a scoped key, and with curl run calls 1 → 2 → 3 on 2–3 real NZ firm
 domains (≈ 4–6 credits). That answers all four.
 
 ## Sources
