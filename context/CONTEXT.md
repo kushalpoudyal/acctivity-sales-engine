@@ -93,6 +93,14 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
 **Personalised AI video (19/11, branch `sendspark-ai-video`):** optional output that sends the approved firm name to
 the Sendspark "Stalktivity" campaign and saves the video's share link. See `SENDSPARK.md` → Our setup.
 
+**Demo environment logins and guards (19/11, branch `demo-logins`, issue #17):** `demo_logins.py` gives the seeder/wipe a
+`DemoFirm(firm_id)` with `.service(user_id)` (shared client-credentials login acting as firm + staff, token cached) and
+`.rep()` (the rep's own access token, memory only, handed over by the host-side `Hack_A_API/tools/Send-RepLogin.ps1`
+from the tray app's DPAPI cache, or pasted; never refreshed). Every write checks the guards: `DEMO_ENVIRONMENT=test`,
+`DEMO_FIRM_ALLOWLIST`, rep token current/test/same firm, Management `isTestFirm`. Endpoints: `GET|PUT|DELETE /api/v1/demo/rep-login`,
+read-only smoke check `GET /api/v1/demo/firms/{id}/check`. Settings: `DEMO_*`, `ACCTIVITY_*_API_URL`, `ACCTIVITY_SERVICE_*`
+(see `Hack_A_API/api/README.md`).
+
 **Not built yet:** per-prospect images (outputs use the brand illustrations), Acctivity product content for proposals, live Acctivity demo environment, auth.
 
 ## Notes on the feed (Claude, 18/11, unverified until probed)
