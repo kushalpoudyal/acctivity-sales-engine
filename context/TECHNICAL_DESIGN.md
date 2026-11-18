@@ -113,3 +113,69 @@ If PowerPoint succeeds but PDF fails, expose the deck and mark the build **parti
 | Live integration, later | On one authorised public firm, confirm the selected models support their tools, record duration and cost, open the generated file, and compare its claims against the approved brief. |
 
 **Provider references:** [OpenAI web search and citations](https://developers.openai.com/api/docs/guides/tools-web-search), [Code Interpreter and container lifecycle](https://developers.openai.com/api/docs/guides/tools-code-interpreter), [Containers API](https://developers.openai.com/api/reference/resources/containers), [tool pricing](https://developers.openai.com/api/docs/pricing#built-in-tools).
+
+## Demo environment: seeding a rep's Acctivity test firm (agreed 19 Nov 2026)
+
+Requirement D1. Platform facts and probe results: [ACCTIVITY.md](./ACCTIVITY.md). No changes to Acctivity/Corto
+code: everything goes through their existing APIs. Stalktivity stays local-only (each rep runs it).
+
+**Firms and accounts (set up once per rep, by hand).**
+- One demo firm per rep, on the **test** environment only. Signed up as `rep+demo@docorto.ai`, which makes it a
+  test firm. The rep is its owner and admin, and it is connected to the Xero Demo Company.
+- Six staff accounts on `rep+demo-s1…s6@docorto.ai`, each invited and signed up once. Pending invitees aren't firm
+  users, so they can't stand in as staff.
+- Logins are one email per firm, so the demo login is separate from the rep's real account.
+
+**Per prospect (the Demo tab).** This needs an approved research snapshot.
+1. **Demo plan.** Hand-written templates per area of law set the structure; OpenAI tailors client and matter details.
+   The rep reviews and edits the plan before anything is written. The first five templates are family, conveyancing
+   & property, wills & estates, commercial, and litigation; a prospect in another area falls back to the closest
+   template, with a flag.
+   - **Staff:** the prospect's real people from the website and Apollo, up to 6, in this order: managing partner,
+     up to 2 partners covering the main areas, a senior associate, an associate, a paralegal. Names and titles
+     only, never their emails or phones.
+   - **Rates:** from a hand-maintained table by seniority and region.
+   - **Data:** clients and matters are fictional. There are 15–25 matters, weighted by the firm's practice-area mix,
+     with matter types resolved to Docs Core ids for the firm's country and state. Time entries cover 3–4 weeks
+     ending today, at 4–6 h a day per staff member, each billed to the person who did the work; about 80% are left
+     unbilled. There are fixed fees and disbursements, and 2–3 matters are already invoiced.
+2. **Reseed.** Guards:
+   - the firm is on the allowlist
+   - the firm is flagged as a test firm
+   - the token's firm id matches
+   - the rep types to confirm
+
+   Steps:
+   1. Warn which invited users will lose access.
+   2. Wipe the firm: soft-delete everything in Acctivity and Docs Core, including what attendees created.
+   3. Remove the previous prospect's invitees (`deleteCode`).
+   4. Rename the firm and the 6 staff accounts.
+   5. Set the staff rates.
+   6. Create the matters and contacts.
+   7. Create the time entries, fees, disbursements and invoices.
+
+   Every created id is recorded in a `seed_runs` table, so a failed run resumes where it stopped.
+3. **Attendees.** The rep invites the prospect's people with their real work emails, as ordinary users who can
+   see other staff's entries. Their access lasts until the next reseed, or until "release prospect".
+
+**Logins.**
+- The **service login** (the shared accounting M2M client, kept in `.env`, sending firm, user and country headers)
+  writes time entries, fees, disbursements, invoices, rates and matters.
+- The **rep's demo-firm login** reads matter types, writes contacts, does deletes, renames the firm and staff, and
+  sends invites.
+  - It is read from the Acctivity tray app's test token cache by a Windows-side helper (DPAPI). Only the access
+    token is used, never refreshed: Auth0 refresh rotation would sign the tray app out.
+  - If the token has expired, the rep opens the tray app to refresh it.
+  - A pasted token is the fallback.
+
+**Side effects on test.**
+- A firm rename propagates to Salesforce, Stripe and LEAP.
+- Each invitation adds a Stripe test-mode seat.
+
+**Build order (cut from the end if time runs out).**
+1. Logins and guards
+2. Templates, rate table and demo plan
+3. Seeder
+4. Reseed / wipe
+5. Demo tab
+6. Attendee invites and release
