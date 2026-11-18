@@ -30,7 +30,7 @@ def generate_deck(snapshot: str) -> bytes:
         container = client.containers.create(name="acctivity-proposal")
         try:
             response = client.responses.create(
-                model=os.getenv("OPENAI_DECK_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-5.4-mini",
+                model=os.getenv("OPENAI_DECK_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-6.1-sol",
                 tools=[{"type": "code_interpreter", "container": container.id}],
                 tool_choice="required",
                 instructions=("Create a short editable sales proposal for Acctivity in Python. "

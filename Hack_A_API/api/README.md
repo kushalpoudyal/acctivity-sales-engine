@@ -5,9 +5,33 @@
 With the API and Vite running, visit `http://127.0.0.1:5173/prospects`.
 `POST /api/v1/firms` saves a website and optional display name. `GET /api/v1/firms`
 lists firms; append `/{id}` to read the saved brief. `POST /api/v1/firms/{id}/research`
-with JSON `{}` starts a paid, site-restricted OpenAI web search; poll the firm detail
-until `status` is no longer `researching`. Uncited lines are not saved as findings.
+with JSON `{}` crawls the firm's public website then starts a paid OpenAI
+extraction; poll the firm detail until `status` is no longer `researching`.
+The crawler respects robots.txt, follows only the firm's domain (and www),
+prioritises staff/about/contact/service pages, and stops at 32 pages, 240,000
+text characters or 150 seconds. No login, JavaScript rendering or PDF parsing.
+Coverage and skipped pages are shown in the UI. Each extracted finding includes
+a source page and a verbatim supporting passage verified against fetched text.
+Profiles and findings are stored in SQLite. This is bounded research, not a
+guarantee that every lawyer or every page on a site has been found.
+
+Named staff are stored in the `staff` table, linked to the firm: name, published
+position, public work contacts, biography, qualifications, practice areas and
+supporting source. Public website logos (PNG/JPEG/WebP, same domain, up to 1.5 MB
+each) are saved in `brand_assets`, not hotlinked. SVG, external CDN logos and
+browser screenshots are not collected in this slice. Robots rules apply.
+Review permission before using branding outside a private demo.
+
+After approval, `GET /api/v1/firms/{id}/proposals/{approval_id}/demo-export`
+downloads a JSON staging payload with only the approved findings and staff,
+plus links to current saved logos. This is our export schema, not yet an
+Acctivity import contract. It does not create live tenants/users or send invites.
+The deployment API, required fields and safe demo-account policy must be agreed
+before connecting a live Acctivity system.
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
+The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`
+overrides the shared default, with `OPENAI_RESEARCH_MODEL` and `OPENAI_DECK_MODEL`
+overriding individual operations. API model access depends on the OpenAI account.
 
 Review the findings, deselect anything unsuitable, then approve. Approval saves a
 snapshot without a paid request. **Generate PowerPoint** builds from that snapshot

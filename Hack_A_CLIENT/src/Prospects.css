@@ -10,4 +10,14 @@
 .prospects .firm-row[aria-pressed=true]{box-shadow:inset 4px 0 #165952}
 .prospects li{margin-bottom:.9rem;overflow-wrap:anywhere}.prospects li a{display:inline-block;margin-right:.65rem;color:#12534a;text-decoration:underline}
 .prospects [role=alert]{padding:.8rem;background:#fff0d4}
+.prospects .finding-list{list-style:none;padding:0}
+.prospects .finding-list li{padding:1rem;background:#f3f7f4;border-radius:8px}
+.prospects .finding-choice{display:flex;align-items:flex-start;gap:.65rem}
+.prospects .finding-choice input{width:auto;margin-top:.3rem;flex:none}
+.prospects details{margin:.5rem 0;color:#3b5f55}
+.prospects summary{cursor:pointer}.prospects blockquote{margin:.6rem;font-size:.88rem}
+.prospects .staff-table{overflow:auto}.prospects table{width:100%;border-collapse:collapse;font-size:.85rem}
+.prospects th,.prospects td{padding:.5rem;text-align:left;border-bottom:1px solid #d5dfd8}
+.prospects .firm-logo{max-width:220px;max-height:100px;object-fit:contain;background:#eef0ee;padding:8px}
+.prospects figure{margin:1rem 0}.prospects figcaption a,.prospects a[download]{text-decoration:underline}
 @media(max-width:700px){.prospect-grid{grid-template-columns:1fr}}

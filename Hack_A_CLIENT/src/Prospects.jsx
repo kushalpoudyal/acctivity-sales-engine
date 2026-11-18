@@ -72,11 +72,25 @@ export default function Prospects() {
       {!matches.length && <p>{firms.length ? 'No matching firms.' : 'No firms saved yet.'}</p>}</section>
     <section aria-live="polite">{detail && detail.id === id ? <>
       <small>FIRM WORKSPACE</small><h2>{detail.name}</h2><p>{detail.domain} · {labels[detail.status]}</p>
-      <p>Search this firm's public website using OpenAI. Each run may incur charges.</p>
+      <p>Read the firm's website, including team profiles, services and contact pages, then extract a detailed firm brief with OpenAI. Each run may incur charges.</p>
       <button disabled={busy || detail.status === 'researching'} onClick={research}>{detail.status === 'researching' ? 'Researching…' : 'Run website research'}</button>
+      {detail.research_meta?.pages_read > 0 && <p>{detail.status === 'researching' ? detail.research_meta.stage : 'Website research'} · {detail.research_meta.pages_read} pages read</p>}
+      {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
       {detail.error && <p role="alert">{detail.error}</p>}
+      {detail.brief.length > 0 && !detail.research_meta?.pages_read && <p>This brief used the earlier quick search. Run website research again to populate detailed staff records and saved logos.</p>}
+      {detail.staff?.length > 0 && <div><h3>Staff records ({detail.staff.length})</h3>
+        <p>Public website records saved for demo preparation. These are not active Acctivity accounts.</p>
+        <div className="staff-table"><table><thead><tr><th>Name</th><th>Position</th><th>Public work contact</th></tr></thead>
+          <tbody>{detail.staff.map(person => <tr key={person.id}><td>{person.full_name}</td><td>{person.position || 'Not published'}</td>
+            <td>{[person.public_work_email, person.public_work_phone].filter(Boolean).join(' · ') || 'Not published'}</td></tr>)}</tbody></table></div></div>}
+      {detail.brand_assets?.length > 0 && <div><h3>Saved firm branding</h3>
+        <p>Published website logos for private demo preparation; review permission before distributing.</p>
+        {detail.brand_assets.map(asset => <figure key={asset.id}><img className="firm-logo" alt={`${detail.name} published logo`}
+          src={`${base}/${id}/brand-assets/${asset.id}`} /><figcaption><a href={`${base}/${id}/brand-assets/${asset.id}`} download>Download logo</a>
+          {' · '}<a href={asset.source_url} target="_blank" rel="noreferrer">Website source</a></figcaption></figure>)}</div>}
       {detail.brief.length > 0 && <BriefReview key={`${id}:${detail.brief_token}`} detail={detail} busy={busy} submit={submitProposal} />}
       {detail.proposals?.map(p => <div key={p.id}><h3>Approved brief #{p.id}</h3>
+        <p><a href={`${base}/${id}/proposals/${p.id}/demo-export`}>Download approved firm and staff data (JSON)</a></p>
         {p.status === 'ready' ? <a href={`${base}/${id}/proposals/${p.id}/download`}>Download PowerPoint (.pptx)</a> :
           <><p>{p.error || (p.status === 'building' ? 'Building PowerPoint in the OpenAI container…' : 'Approval saved. Generating a PowerPoint uses OpenAI credits.')}</p>
             <button disabled={busy || p.status === 'building'} onClick={() => submitProposal(`proposals/${p.id}/build`, {})}>{p.status === 'failed' ? 'Retry PowerPoint' : 'Generate PowerPoint'}</button></>}</div>)}
@@ -86,9 +100,15 @@ export default function Prospects() {
 
 function BriefReview({ detail, busy, submit }) {
   const [selected, setSelected] = useState(detail.brief.map((_, i) => i))
+  const categories = [...new Set(detail.brief.map(item => item.category || 'Website findings'))]
   return <><h3>Review cited findings</h3><small>{detail.researched_at} UTC · Uncheck anything you do not want in the proposal.</small>
-    <ul>{detail.brief.map((item, i) => <li key={i}><label><input type="checkbox" checked={selected.includes(i)}
-      onChange={e => setSelected(e.target.checked ? [...selected, i] : selected.filter(n => n !== i))} /> {item.text}</label>
-      <div>{item.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div></li>)}</ul>
+    {categories.map(category => <div key={category}><h3>{category}</h3>
+      <ul className="finding-list">{detail.brief.map((item, i) => (item.category || 'Website findings') === category && <li key={i}>
+        <label className="finding-choice"><input type="checkbox" checked={selected.includes(i)}
+          onChange={e => setSelected(e.target.checked ? [...selected, i] : selected.filter(n => n !== i))} />
+          <span>{item.title && <strong>{item.title}<br /></strong>}{item.text}</span></label>
+        <div>{item.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div>
+        {item.evidence && <details><summary>Supporting website passage</summary><blockquote>{item.evidence}</blockquote></details>}
+      </li>)}</ul></div>)}
     <button disabled={busy || !selected.length || detail.status === 'researching'} onClick={() => submit('approvals', { brief_token: detail.brief_token, findings: selected })}>Approve selected findings</button></>
 }

@@ -10,7 +10,7 @@ from prospects import initialize, router
 
 load_dotenv(Path(__file__).with_name(".env"))
 
-DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
+DEFAULT_OPENAI_MODEL = "gpt-6.1-sol"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
