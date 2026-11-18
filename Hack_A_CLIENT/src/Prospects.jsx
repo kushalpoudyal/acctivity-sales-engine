@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './Prospects.css'
+import logo from './assets/logo.png'
 
 const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
@@ -78,8 +79,11 @@ export default function Prospects() {
     }
   }
   const matches = firms.filter(f => (f.name + ' ' + f.domain).toLowerCase().includes(query.toLowerCase()))
-  return <main className="prospects">
-    <header className="directory-header"><small>ACCTIVITY.AI / INSTANT SALES ENGINE</small><h1>Prospect workspace</h1>
+  return <div className="prospects-page">
+  <main className="prospects">
+    <header className="directory-header">
+      <a className="app-brand" href="/prospects"><img src={logo} alt="" width="28" height="28" /><span>Stalktivity</span></a>
+      <h1>Prospect workspace</h1>
       <p>Research the firm. Review its people. Build a sales pack that feels personal.</p></header>
     <form className="intake" onSubmit={add}><h2>Add a firm</h2><label>Firm website<input name="website" required maxLength={2048} placeholder="firm.com.au" /></label>
       <label>Display name (optional)<input name="display_name" maxLength={160} /></label><button disabled={busy}>Save firm</button></form>
@@ -87,12 +91,13 @@ export default function Prospects() {
     <div className="prospect-grid"><aside className="directory"><h2>Firms <span className="badge">{firms.length}</span></h2>
       <label>Filter directory<input value={query} onChange={e => search(e.target.value)} placeholder="Name or website" /></label>
       {matches.map(f => <button disabled={busy} className="firm-row" aria-pressed={id === f.id} key={f.id} onClick={() => chooseFirm(f.id)}>
-        <strong>{f.name}</strong><span>{f.domain}</span><small>{labels[f.status]}</small></button>)}
+        <strong>{f.name}</strong><span>{f.domain}</span><small data-status={f.status}>{labels[f.status]}</small></button>)}
       {!matches.length && <p>{firms.length ? 'No matching firms.' : 'No firms saved yet.'}</p>}</aside>
     <section className="workspace">{detail && detail.id === id
       ? <FirmWorkspace key={id} detail={detail} busy={busy} mutate={mutate} onDirty={setDirty} />
       : <><h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></>}</section></div>
   </main>
+  </div>
 }
 
 function FirmWorkspace({ detail, busy, mutate, onDirty }) {
@@ -104,7 +109,7 @@ function FirmWorkspace({ detail, busy, mutate, onDirty }) {
   }
   return <>
     <div className="workspace-heading"><div><small>FIRM WORKSPACE</small><h2>{detail.name}</h2><p>{detail.domain}</p></div>
-      <span className="badge">{labels[detail.status]}</span></div>
+      <span className="badge" data-status={detail.status}>{labels[detail.status]}</span></div>
     <div className="workspace-tabs" role="tablist" aria-label="Firm workspace">
       <button id="research-tab" role="tab" aria-selected={tab === 'research'} aria-controls="research-panel" onClick={() => setTab('research')}>01 &nbsp; Research</button>
       <button id="outputs-tab" role="tab" aria-selected={tab === 'outputs'} aria-controls="outputs-panel" onClick={() => setTab('outputs')}>02 &nbsp; Create outputs</button>
