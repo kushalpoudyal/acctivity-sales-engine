@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prospect studio | Acctivity</title>
+<style>
+:root{font:15px/1.5 system-ui,sans-serif;color:#243636;background:#f5f5f1;--ink:#123e43;--teal:#086774;--line:#d6e0da}
+*{box-sizing:border-box}body{margin:0}header{display:flex;align-items:center;gap:14px;padding:17px max(5vw,20px);background:white;border-bottom:1px solid var(--line)}.mark,.avatar{display:inline-grid;place-items:center;border-radius:10px;font-weight:750}.mark{background:var(--ink);color:#fff;width:37px;height:37px}.brand{font: bold 24px Georgia,serif}.demo{margin-left:auto;background:#fff2cf;color:#694900}main{max-width:1160px;margin:auto;padding:35px 24px 60px}nav{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:32px}button,input,select{font:inherit}button,.action,nav a{border:1px solid var(--line);border-radius:8px;padding:9px 15px;color:var(--ink);background:white;cursor:pointer;text-decoration:none}button:hover,nav a:hover{border-color:var(--teal)}.primary,nav a[aria-current=page]{background:var(--ink);color:white}.eyebrow{font-size:.73rem;font-weight:750;letter-spacing:.14em;text-transform:uppercase;color:#386968}h1,h2,h3,p{margin:0}h1,h2{font-family:Georgia,serif;font-weight:normal;color:var(--ink)}h1{font-size:clamp(34px,5vw,55px);line-height:1.15;margin:7px 0}h2{font-size:26px;margin:3px 0 12px}h3{font-size:1rem}p,small{color:#516460}.title,.bar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}.title{margin-bottom:25px}.stats,.cols{display:grid;gap:16px}.stats{grid-template-columns:repeat(3,1fr);margin:18px 0}.cols{grid-template-columns:minmax(0,1.65fr) minmax(240px,1fr)}article,.card{border:1px solid var(--line);border-radius:14px;background:white;padding:22px}.stats strong{display:block;font:36px Georgia;color:var(--ink)}.shade{background:#e8f1ec}.pill,.demo{display:inline-block;border-radius:20px;padding:4px 11px;font-size:.8rem;font-weight:650}.pill{background:#e1eeea;color:#285c53}.waiting{background:#fff0c8;color:#654e13}.avatar{width:38px;height:38px;background:#d8e9e9;color:#23575e}.who{display:flex;gap:12px;align-items:center}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:left;padding:13px 10px;border-bottom:1px solid var(--line)}th{font-size:.77rem;color:#596e68}.scroll{overflow:auto}input:not([type=checkbox]),select{border:1px solid #aebdb6;padding:10px;border-radius:7px;max-width:100%;background:white;color:var(--ink)}.field{display:block;margin:16px 0}.field input{display:block;width:100%;margin-top:5px}.option{display:block;padding:12px 0;border-bottom:1px solid var(--line)}input[type=checkbox]{accent-color:var(--teal)}.step{margin:18px 0}.file{border-left:3px solid #e6ad58;background:#fbf8ef;margin:8px 0;padding:10px 12px}.note{font-size:.85rem;margin-top:12px}button:disabled{opacity:.55;cursor:not-allowed}[hidden]{display:none!important}:focus-visible{outline:3px solid #b37724;outline-offset:3px}@media(max-width:720px){.cols{grid-template-columns:1fr}.stats{gap:6px}.stats article{padding:10px}.brand{font-size:20px}main{padding:22px 14px}nav{margin-bottom:18px}}
+</style>
+</head>
+<body>
+<header><span class="mark">Ac</span><strong class="brand">Acctivity</strong><span>Sales engine</span><span class="demo">Interactive mockup</span></header>
+<main>
+<nav aria-label="Prototype screens"><a href="#firms">01 &nbsp; Prospects</a><a href="#add">02 &nbsp; Add firm</a><a href="#studio">03 &nbsp; Output studio</a></nav>
+<section id="firms">
+<div class="title"><div><div class="eyebrow">Sales workspace / Directory</div><h1>Prospects</h1><p>From first look to first meeting. Pick a firm to prepare its sales pack.</p></div><a class="action primary" href="#add">+ Add firm</a></div>
+<div class="stats"><article><small>Firms in workspace</small><strong id="total"></strong></article><article><small>Briefs ready</small><strong id="ready"></strong></article><article><small>With sample outputs</small><strong id="packs"></strong></article></div>
+<article><div class="bar"><h2>Firm directory</h2><input id="search" aria-label="Search firms" placeholder="Search firms or domains"></div><div class="scroll"><table><thead><tr><th>Firm</th><th>Key contact</th><th>Research</th><th>Outputs</th><th>Workspace</th></tr></thead><tbody id="rows"></tbody></table></div><p id="empty" hidden>No firms match this search.</p></article>
+</section>
+<section id="add" hidden>
+<div class="title"><div><div class="eyebrow">Prospect intake / New record</div><h1>Add a firm</h1><p>Start with a website. Choose how much additional research to request.</p></div></div>
+<div class="cols"><form class="card" id="intake"><h2>Firm details</h2><label class="field">Firm website<input id="domain" required placeholder="e.g. harbourlegal.example"></label><label class="field">Display name <small>(optional)</small><input id="firmname" placeholder="Use the domain if left blank"></label><h3>Research sources</h3><div class="option"><b>Firm website</b><p>Practice areas, team, offices and published history, with citations.</p></div><label class="option"><input id="apollo" type="checkbox"> <b>Enrich with Apollo</b><br><small>Optional organisation and role lookup. Live enrichment may use credits.</small></label><div class="step"><button class="primary">Create firm &amp; open studio</button></div></form>
+<article class="shade"><div class="eyebrow">Intake guide</div><h2>What happens next?</h2><p class="step"><b>01 &nbsp; Research</b><br>Review a sourced brief before generating material.</p><p class="step"><b>02 &nbsp; Choose outputs</b><br>Pick just the files you need for this meeting.</p><p class="step"><b>03 &nbsp; Build a pack</b><br>Track each sandbox job and review its results.</p><small>Prototype only. Entries stay in this tab until refresh.</small></article></div>
+</section>
+<section id="studio" hidden>
+<div class="title"><div><div class="eyebrow">Firm workspace / Output studio</div><h1 id="studioName"></h1><p id="studioDomain"></p></div><label>Switch firm <select id="picker"></select></label></div>
+<div class="cols"><div><article><div class="eyebrow">Step 01 / Research APIs</div><h2>Prepare the firm brief</h2><p id="sources"></p><div class="step"><button id="research">Simulate research</button></div><p id="brief" aria-live="polite"></p></article>
+<article class="step"><div class="eyebrow">Step 02 / OpenAI sandbox</div><h2>Build presentation files</h2><p>Select formats for the container job.</p><div id="formats"></div><div class="step"><button id="build" class="primary">Simulate container build</button></div><small>No paid calls. Previews are mock filenames, not downloadable files.</small></article></div>
+<aside><article class="shade"><div class="eyebrow">Execution monitor</div><h2>Run history</h2><ol id="history" aria-live="polite"></ol></article><article class="step"><div class="eyebrow">Asset shelf</div><h2>Output previews</h2><div id="assets" aria-live="polite"></div></article></aside></div>
+</section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const formats=['Proposal deck (.pptx)','Sales proposal (.docx)','Welcome guide (.pdf)'];
+const extensions=['pptx','docx','pdf'];
+const data=[];
+function firm(name,domain,contact,ready=false,apollo=false){
+  return {name,domain,contact,ready,apollo,files:[],chosen:[0,1],log:[],busy:false};
+}
+data.push(firm('Harbourside Legal','harbourside.example','Priya Raman · Partner',true),firm('Bellbird Family Law','bellbird.example','Sophie Nguyen · Practice manager',true),firm('Northgate Conveyancing','northgate.example','Not identified'));
+data[0].files=['proposal-deck.pptx']; data[0].log=['Sample brief reviewed','Sample deck generated'];
+let active=0;
+const el=(tag,text,cls)=>{const n=document.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n};
+function list(){
+  $('total').textContent=data.length;$('ready').textContent=data.filter(f=>f.ready).length;$('packs').textContent=data.filter(f=>f.files.length).length;
+  $('rows').replaceChildren();data.forEach((f,i)=>{
+    if(!(f.name+' '+f.domain).toLowerCase().includes($('search').value.toLowerCase()))return;
+    const row=$('rows').insertRow(),who=el('div','','who'),name=el('div','');
+    name.append(el('b',f.name),el('br',''),el('small',f.domain));who.append(el('span',f.name.split(/\s+/).slice(0,2).map(s=>s[0]).join('').toUpperCase(),'avatar'),name);
+    row.insertCell().append(who);row.insertCell().textContent=f.contact;
+    row.insertCell().append(el('span',f.ready?'Brief ready':'Not researched',f.ready?'pill':'pill waiting'));row.insertCell().textContent=f.files.length+' files';
+    const b=el('button','Open studio');b.onclick=()=>{active=i;location.hash='studio'};row.insertCell().append(b);
+  });$('empty').hidden=!!$('rows').children.length;
+}
+function studio(){
+  const f=data[active];$('studioName').textContent=f.name;$('studioDomain').textContent=f.domain;
+  $('picker').replaceChildren(...data.map((r,i)=>new Option(r.name,i)));$('picker').value=active;
+  $('sources').textContent='OpenAI web search · Firm website'+(f.apollo?' + Apollo organisation and people search':' only · Apollo off');
+  $('brief').textContent=f.ready?'Sample brief ready for output selection.':'No brief yet. Run simulated research first.';
+  $('research').disabled=f.busy;$('build').disabled=f.busy||!f.ready||!f.chosen.length;
+  $('formats').replaceChildren(...formats.map((text,i)=>{const l=el('label','','option'),c=el('input','');c.type='checkbox';c.checked=f.chosen.includes(i);c.disabled=f.busy;c.onchange=()=>{f.chosen=c.checked?[...f.chosen,i]:f.chosen.filter(x=>x!==i);$('build').disabled=!f.ready||!f.chosen.length};l.append(c,' '+text);return l}));
+  $('history').replaceChildren(...(f.log.length?f.log:['Waiting for first run']).map(s=>el('li',s)));
+  $('assets').replaceChildren(...(f.files.length?f.files.map(s=>el('div',s,'file')):[el('p','Generated file previews will appear here.')]));
+}
+function render(){const page=['add','studio'].includes(location.hash.slice(1))?location.hash.slice(1):'firms';for(const s of ['firms','add','studio'])$(s).hidden=s!==page;
+  document.querySelectorAll('nav a').forEach(a=>a.hash==='#'+page?a.setAttribute('aria-current','page'):a.removeAttribute('aria-current'));list();studio()}
+$('search').oninput=list;$('picker').onchange=e=>{active=Number(e.target.value);studio()};
+$('domain').oninput=()=>$('domain').setCustomValidity('');
+$('intake').onsubmit=e=>{e.preventDefault();const input=$('domain'),raw=input.value.trim();let domain;
+  try{const u=new URL(raw.includes('://')?raw:'https://'+raw);if(!['http:','https:'].includes(u.protocol)||!u.hostname.includes('.')||u.username||u.password)throw Error();domain=u.hostname.toLowerCase().replace(/^www\./,'')}catch{input.setCustomValidity('Enter a website domain, such as harbourlegal.example.');input.reportValidity();return}
+  if(data.some(f=>f.domain===domain)){input.setCustomValidity('That firm is already in the directory.');input.reportValidity();return}
+  active=data.push(firm($('firmname').value.trim()||domain,domain,'Not identified',false,$('apollo').checked))-1;e.target.reset();location.hash='studio'};
+function simulate(build){
+  const f=data[active];if(f.busy)return;f.busy=true;f.log.push(build?'Sandbox container queued':'Website research queued');render();
+  setTimeout(()=>{if(build){for(const i of f.chosen){const name=['proposal-deck','sales-proposal','welcome-guide'][i]+'.'+extensions[i];if(!f.files.includes(name))f.files.push(name)}f.log.push('Sandbox complete · '+f.chosen.length+' file preview(s)')}
+    else{f.ready=true;f.log.push(f.apollo?'Website + Apollo simulation complete':'Website simulation complete · Apollo skipped')}f.busy=false;render()},700);
+}
+$('research').onclick=()=>simulate(false);$('build').onclick=()=>simulate(true);onhashchange=render;render();
+</script></body></html>
