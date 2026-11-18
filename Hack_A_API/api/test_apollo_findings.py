@@ -126,8 +126,9 @@ class ApolloFindingTests(unittest.TestCase):
         detail = prospects.get_firm(firm_id)
         self.assertEqual(detail["apollo_findings"], [])
         with prospects.database() as db:
-            brief = db.execute("SELECT brief FROM firms WHERE id=?", (firm_id,)).fetchone()[0]
-        self.assertEqual(detail["brief_token"], prospects.digest(brief))
+            row = db.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
+            brief = row["brief"]
+        self.assertEqual(detail["brief_token"], prospects.revision_token(row))
         approval = prospects.approve(firm_id, prospects.Approval(brief_token=detail["brief_token"], findings=[0]))
         with prospects.database() as db:
             snapshot = db.execute("SELECT snapshot FROM proposals WHERE id=?", (approval["id"],)).fetchone()[0]
@@ -155,6 +156,32 @@ class ApolloFindingTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as unknown:
             self.approve(firm_id, [0], ["apollo:tech:clio"])
         self.assertEqual(unknown.exception.status_code, 422)
+
+    def test_brief_edit_keeps_apollo_contacts_and_needs_the_combined_token(self):
+        firm_id = self.firm()
+        self.research(firm_id, PERSON)
+        self.enrich(firm_id)
+        self.reveal(firm_id, JANE, BOB)
+        before = prospects.get_firm(firm_id)
+        person = before["brief"][0]["person"]
+        edit = prospects.BriefEdit(brief_token=before["brief_token"], display_name="Firm Ltd", findings=[
+            prospects.FindingEdit(index=0, title="Jane", text="Jane leads family law.",
+                                  person={**person, "biography": "Edited bio"})])
+        edited = prospects.edit_brief(firm_id, edit)
+        staff = {p["full_name"]: p for p in edited["staff"]}
+        self.assertEqual(sorted(staff), [BOB["name"], JANE["name"]])
+        self.assertEqual((staff[JANE["name"]]["source"], staff[JANE["name"]]["apollo_email"]), ("both", JANE["email"]))
+        self.assertEqual(staff[JANE["name"]]["profile"]["biography"], "Edited bio")
+        self.assertEqual((staff[BOB["name"]]["source"], staff[BOB["name"]]["apollo_email"]), ("apollo", BOB["email"]))
+        self.assertIn("apollo:contact:ap-bob", [f["key"] for f in edited["apollo_findings"]])
+        self.assertNotEqual(edited["brief_token"], before["brief_token"])
+        with self.assertRaises(HTTPException) as stale:  # the brief changed since `before`
+            prospects.approve(firm_id, prospects.Approval(brief_token=before["brief_token"], findings=[0]))
+        self.assertEqual(stale.exception.status_code, 409)
+        _, snapshot, _ = self.approve(firm_id, [0], ["apollo:contact:ap-bob"])
+        self.assertIn("Edited bio", snapshot)
+        self.research(firm_id, PERSON)  # re-research also keeps the Apollo contacts
+        self.assertEqual(sorted(p["full_name"] for p in self.staff(firm_id)), [BOB["name"], JANE["name"]])
 
     def test_org_without_lists_and_contact_without_email(self):
         found = apollo_findings({"industry": "law practice", "keywords": None}, None,

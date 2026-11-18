@@ -62,3 +62,37 @@ class DirectoryTests(unittest.TestCase):
             excluded = prospects.approve(firm["id"], prospects.Approval(
                 brief_token=detail["brief_token"], findings=[1]))
             self.assertEqual(json.loads(prospects.demo_export(firm["id"], excluded["id"]).body)["staff"], [])
+
+    def test_rep_edits_update_staff_but_preserve_sources_and_approved_snapshot(self):
+        person = {"full_name": "Jane Smith", "position": "Partner", "public_work_email": None,
+                  "public_work_phone": None, "biography": None, "qualifications": [], "practice_areas": []}
+        finding = {"title": "Jane", "text": "Jane is a Partner", "person": person,
+                   "sources": [{"url": "https://firm.example/jane", "title": "Jane"}],
+                   "evidence": "Jane is a Partner"}
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            prospects, "DB_PATH", Path(folder) / "test.sqlite3"
+        ):
+            prospects.initialize()
+            firm = prospects.add_firm(prospects.Intake(website="firm.example"))
+            with prospects.database() as db:
+                db.execute("UPDATE firms SET brief=?,status='ready' WHERE id=?",
+                           (json.dumps([finding]), firm["id"]))
+            before = prospects.get_firm(firm["id"])
+            approval = prospects.approve(firm["id"], prospects.Approval(
+                brief_token=before["brief_token"], findings=[0]))
+            edited_person = {**person, "position": "Managing Partner"}
+            edited = prospects.edit_brief(firm["id"], prospects.BriefEdit(
+                brief_token=before["brief_token"], display_name="Test Legal",
+                findings=[prospects.FindingEdit(index=0, title="Jane",
+                          text="Jane is Managing Partner", person=edited_person)]))
+            self.assertEqual(edited["name"], "Test Legal")
+            self.assertEqual(edited["staff"][0]["position"], "Managing Partner")
+            self.assertEqual(edited["brief"][0]["sources"], finding["sources"])
+            self.assertEqual(edited["brief"][0]["original"]["person"]["position"], "Partner")
+            self.assertTrue(edited["brief"][0]["rep_edited"])
+            self.assertEqual(edited["proposals"][0]["snapshot"]["findings"][0]["person"]["position"], "Partner")
+            with self.assertRaises(HTTPException) as stale:
+                prospects.approve(firm["id"], prospects.Approval(
+                    brief_token=before["brief_token"], findings=[0]))
+            self.assertEqual(stale.exception.status_code, 409)
+            self.assertEqual(prospects.demo_export(firm["id"], approval["id"]).status_code, 200)

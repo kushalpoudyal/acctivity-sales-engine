@@ -28,6 +28,55 @@ plus links to current saved logos. This is our export schema, not yet an
 Acctivity import contract. It does not create live tenants/users or send invites.
 The deployment API, required fields and safe demo-account policy must be agreed
 before connecting a live Acctivity system.
+
+## Research and Create outputs tabs
+
+- **Research:** edit the firm display name, individual findings and structured
+  staff profiles, and choose a preferred saved logo. Saving uses
+  `PUT /api/v1/firms/{id}/brief` with the latest `brief_token` and the complete
+  indexed findings list. Stale edits return `409`. Original source links and
+  evidence remain read-only; corrections are labelled as rep edits. Research
+  reruns replace current research, not existing approvals.
+- **Approve & create outputs:** selected findings are copied into an immutable
+  approval. Later edits do not change that snapshot. No paid call is made at
+  approval.
+- **Create outputs:** choose an approval, PowerPoint (`pptx`), Word (`docx`),
+  welcome PDF (`pdf`), optional saved logo and sales instructions. A single
+  OpenAI container creates the requested formats. Each file is validated and
+  saved independently in SQLite before container deletion.
+
+`POST /api/v1/firms/{id}/outputs` accepts:
+
+```json
+{
+  "approval_id": 1,
+  "formats": ["pptx", "docx", "pdf"],
+  "instructions": "Partner-level proposal for a proposed family law pilot.",
+  "logo_id": null,
+  "request_key": "fe829ab4-abcc-4cd7-97ba-9a7f5484b9e2"
+}
+```
+
+It returns `202` with the job ID and status. Reusing the same request key and
+payload returns the existing job, without starting another paid run. A changed
+payload requires a new key. Poll firm detail for `outputs`: each run has a stage,
+status and per-file results. Ready files are downloaded from
+`GET /api/v1/firms/{id}/outputs/{job_id}/files/{file_id}`.
+The UI shows partial failures and lets the rep prepare a new run for failed
+formats only. Container jobs survive page refreshes, but this local single-process
+prototype does not resume interrupted provider work after a server restart;
+already saved downloads remain available.
+
+The shared model defaults to `gpt-6.1-sol`. A selected logo is copied into the job
+so later research cannot change that run's branding. No live tenant/user creation,
+email sending or invitations occur. Keep this unauthenticated prototype on
+loopback, not a public network.
+
+### Focused checks
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs
+```
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
 The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`
 overrides the shared default, with `OPENAI_RESEARCH_MODEL` and `OPENAI_DECK_MODEL`
@@ -89,7 +138,7 @@ OPENAI_API_KEY=your-api-key
 
 The server loads `.env` at startup. `.env` is ignored by Git; `.env.example`
 shows the required variable without a secret. Set `OPENAI_MODEL` to override the
-default model, `gpt-5.4-mini`.
+default model, `gpt-6.1-sol`.
 
 ## Start the development server
 

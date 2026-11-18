@@ -12,7 +12,7 @@ from apollo_findings import apollo_findings
 import openai
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
 from decks import DeckError, generate_deck
-from firm_research import ResearchError, crawl_site, download_logo, extract_profile
+from firm_research import Person, ResearchError, crawl_site, download_logo, extract_profile
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/v1/firms", tags=["Prospects"])
@@ -47,6 +47,8 @@ def initialize():
                                    ("apollo_org", "TEXT"), ("apollo_enriched_at", "TEXT")]:
             if column not in columns:
                 db.execute(f"ALTER TABLE firms ADD COLUMN {column} {definition}")
+        if "preferred_logo_id" not in columns:
+            db.execute("ALTER TABLE firms ADD COLUMN preferred_logo_id INTEGER")
         db.execute("""CREATE TABLE IF NOT EXISTS proposals (
             id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL, digest TEXT NOT NULL,
             snapshot TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'approved',
@@ -65,6 +67,24 @@ def initialize():
             id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL, source_url TEXT NOT NULL,
             mime_type TEXT NOT NULL, content BLOB NOT NULL,
             UNIQUE(firm_id,source_url))""")
+        db.execute("""CREATE TABLE IF NOT EXISTS output_jobs (
+            id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL, approval_id INTEGER NOT NULL,
+            request_key TEXT NOT NULL, request_digest TEXT NOT NULL,
+            snapshot TEXT NOT NULL, instructions TEXT NOT NULL, formats TEXT NOT NULL,
+            logo BLOB, logo_mime TEXT, status TEXT NOT NULL DEFAULT 'queued',
+            stage TEXT NOT NULL DEFAULT 'Queued', error TEXT, container_id TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(firm_id,request_key))""")
+        db.execute("""CREATE TABLE IF NOT EXISTS output_files (
+            id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, format TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued', error TEXT, content BLOB,
+            UNIQUE(job_id,format))""")
+        db.execute("""UPDATE output_files SET status='failed',error='Build interrupted; start a new run.'
+                      WHERE job_id IN (SELECT id FROM output_jobs WHERE status IN ('queued','running'))
+                      AND status!='ready'""")
+        db.execute("""UPDATE output_jobs SET status='failed',stage='Interrupted',
+                      error='Build interrupted by server restart. Saved files remain available.'
+                      WHERE status IN ('queued','running')""")
 
 
 class Intake(BaseModel):
@@ -98,12 +118,20 @@ def list_firms():
 def get_firm(firm_id: int):
     with database() as db:
         row = db.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
-        proposals = [dict(p) for p in db.execute(
-            "SELECT id,status,error FROM proposals WHERE firm_id=? ORDER BY id DESC", (firm_id,))]
+        proposals = [{**dict(p), "snapshot": json.loads(p["snapshot"])} for p in db.execute(
+            "SELECT id,status,error,snapshot FROM proposals WHERE firm_id=? ORDER BY id DESC", (firm_id,))]
         staff = [{**dict(p), "profile": json.loads(p["profile"])} for p in db.execute(
             "SELECT * FROM staff WHERE firm_id=? ORDER BY full_name", (firm_id,))]
         assets = [dict(p) for p in db.execute(
             "SELECT id,source_url,mime_type FROM brand_assets WHERE firm_id=?", (firm_id,))]
+        outputs = [dict(p) for p in db.execute(
+            """SELECT id,approval_id,instructions,formats,status,stage,error,created_at
+               FROM output_jobs WHERE firm_id=? ORDER BY id DESC""", (firm_id,))]
+        for job in outputs:
+            job["formats"] = json.loads(job["formats"])
+            job["files"] = [dict(p) for p in db.execute(
+                "SELECT id,format,status,error,length(content) AS size FROM output_files WHERE job_id=?",
+                (job["id"],))]
     if not row:
         raise HTTPException(404, "Firm not found.")
     values = dict(row)
@@ -112,8 +140,8 @@ def get_firm(firm_id: int):
     extra = apollo_findings(org, row["apollo_enriched_at"], staff)
     return {**values, "research_meta": json.loads(row["research_meta"]),
             "apollo_org": org, "apollo_configured": apollo.configured(), "apollo_findings": extra,
-            "brief": json.loads(row["brief"]), "brief_token": review_token(row["brief"], extra),
-            "proposals": proposals, "staff": staff, "brand_assets": assets}
+            "brief": json.loads(row["brief"]), "brief_token": review_token(row, extra),
+            "proposals": proposals, "staff": staff, "brand_assets": assets, "outputs": outputs}
 
 
 class ApolloEnrich(BaseModel):
@@ -185,10 +213,79 @@ def digest(text: str):
     return hashlib.sha256(text.encode()).hexdigest()
 
 
-def review_token(brief: str, extra: list[dict]):
-    """Changes whenever the reviewable findings change. Without Apollo findings it is the brief digest,
-    as before Apollo existed."""
-    return digest(brief + json.dumps(extra, sort_keys=True)) if extra else digest(brief)
+def revision_token(firm):
+    return digest(json.dumps([firm["name"], firm["brief"], firm["preferred_logo_id"]]))
+
+
+def review_token(firm, extra: list[dict]):
+    """The approval/edit token: changes when the brief, name or preferred logo change (revision_token)
+    and when the Apollo findings under review change. Without Apollo findings it is revision_token."""
+    base = revision_token(firm)
+    return digest(base + json.dumps(extra, sort_keys=True)) if extra else base
+
+
+def current_review(db, firm):
+    """The firm's Apollo findings and review token, read inside the caller's transaction."""
+    staff = [dict(p) for p in db.execute("SELECT * FROM staff WHERE firm_id=? ORDER BY full_name", (firm["id"],))]
+    extra = apollo_findings(json.loads(firm["apollo_org"]) if firm["apollo_org"] else None,
+                            firm["apollo_enriched_at"], staff)
+    return extra, review_token(firm, extra)
+
+
+class FindingEdit(BaseModel):
+    index: int = Field(ge=0)
+    title: str = Field(default="", max_length=200)
+    text: str = Field(min_length=1, max_length=12000)
+    person: Person | None = None
+
+
+class BriefEdit(BaseModel):
+    brief_token: str
+    display_name: str = Field(min_length=1, max_length=160)
+    logo_id: int | None = None
+    findings: list[FindingEdit] = Field(max_length=250)
+
+
+@router.put("/{firm_id}/brief")
+def edit_brief(firm_id: int, body: BriefEdit):
+    if not body.display_name.strip() or any(not f.text.strip() for f in body.findings):
+        raise HTTPException(422, "Firm name and finding descriptions cannot be blank.")
+    with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        row = db.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Firm not found.")
+        if row["status"] == "researching" or current_review(db, row)[1] != body.brief_token:
+            raise HTTPException(409, "Research changed or is running. Refresh before editing.")
+        original = json.loads(row["brief"])
+        if sorted(f.index for f in body.findings) != list(range(len(original))):
+            raise HTTPException(422, "Save the complete brief. Uncheck findings to exclude them from approval.")
+        if body.logo_id is not None and not db.execute(
+            "SELECT id FROM brand_assets WHERE id=? AND firm_id=?", (body.logo_id, firm_id)
+        ).fetchone():
+            raise HTTPException(422, "Choose a saved logo belonging to this firm.")
+        names = [f.person.full_name.strip().casefold() for f in body.findings if f.person]
+        if any(not name for name in names) or len(names) != len(set(names)):
+            raise HTTPException(422, "Staff names must be nonempty and unique.")
+        edited = []
+        for item in sorted(body.findings, key=lambda f: f.index):
+            old = original[item.index]
+            changes = {"title": item.title.strip(), "text": item.text.strip()}
+            if old.get("person"):
+                if item.person is None:
+                    raise HTTPException(422, "A staff finding must keep its staff profile.")
+                changes["person"] = item.person.model_dump()
+            elif item.person:
+                raise HTTPException(422, "Staff profiles can only be edited on existing staff findings.")
+            if any(old.get(key, "") != value for key, value in changes.items()):
+                changes["rep_edited"] = True
+                changes["original"] = old.get("original", {
+                    key: old.get(key) for key in ("title", "text", "person")})
+            edited.append({**old, **changes})
+        db.execute("UPDATE firms SET name=?,brief=?,preferred_logo_id=? WHERE id=?",
+                   (body.display_name.strip(), json.dumps(edited), body.logo_id, firm_id))
+        replace_website_staff(db, firm_id, edited)
+    return get_firm(firm_id)
 
 
 class Approval(BaseModel):
@@ -204,10 +301,8 @@ def approve(firm_id: int, body: Approval):
         firm = db.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
         if not firm:
             raise HTTPException(404, "Firm not found.")
-        staff = [dict(p) for p in db.execute("SELECT * FROM staff WHERE firm_id=? ORDER BY full_name", (firm_id,))]
-        extra = apollo_findings(json.loads(firm["apollo_org"]) if firm["apollo_org"] else None,
-                                firm["apollo_enriched_at"], staff)
-        if review_token(firm["brief"], extra) != body.brief_token or firm["status"] == "researching":
+        extra, token = current_review(db, firm)
+        if token != body.brief_token or firm["status"] == "researching":
             raise HTTPException(409, "Research changed or is running. Refresh and review the findings again.")
         findings = json.loads(firm["brief"])
         indices = sorted(set(body.findings))
@@ -334,7 +429,7 @@ def replace_website_staff(db, firm_id: int, brief: list[dict]):
         if not (person := finding.get("person")):
             continue
         values = (person["position"], person["public_work_email"], person["public_work_phone"],
-                  json.dumps(person), finding["sources"][0]["url"], finding["evidence"])
+                  json.dumps(person), finding["sources"][0]["url"], finding.get("evidence", ""))
         if row := staff_row(db, firm_id, person["full_name"]):
             db.execute("""UPDATE staff SET position=?, public_work_email=?, public_work_phone=?, profile=?,
                           source_url=?, evidence=?, source=? WHERE id=?""",
@@ -399,6 +494,7 @@ def research(firm_id: int, domain: str):
             db.execute("UPDATE firms SET brief=?, researched_at=CURRENT_TIMESTAMP WHERE id=?",
                        (json.dumps(brief), firm_id))
             replace_website_staff(db, firm_id, brief)
+            db.execute("UPDATE firms SET preferred_logo_id=NULL WHERE id=?", (firm_id,))
             db.execute("DELETE FROM brand_assets WHERE firm_id=?", (firm_id,))
             for logo in logos:
                 db.execute("INSERT INTO brand_assets(firm_id,source_url,mime_type,content) VALUES(?,?,?,?)",
