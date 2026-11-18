@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './Prospects.css'
 import logo from './assets/logo.png'
+import firmIcon from './assets/icon-firm.svg'
 import FindFirms from './FindFirms'
+
+// Find firms (Apollo search) is hidden for now; set to true to show it again.
+const SHOW_FIND_FIRMS = false
 
 const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
-const formatLabels = { pptx: 'PowerPoint proposal', docx: 'Word proposal', pdf: 'Welcome PDF' }
+const formatLabels = { pptx: 'PowerPoint proposal', docx: 'Word proposal', pdf: 'Welcome PDF', video: 'Personalised AI video' }
+const formatHints = { pptx: '.pptx · Editable sales material', docx: '.docx · Editable sales material', pdf: '.pdf · Prospective demo welcome guide', video: 'Sendspark · the AI voice says the firm name' }
 const sourceLabels = { website: 'Website crawl', website_crawl: 'Website crawl', web_search: 'OpenAI web search', reputation: 'Public reputation search', reputation_search: 'Public reputation search' }
 
 async function request(path = '', options) {
@@ -119,7 +124,7 @@ export default function Prospects() {
       <p>Research the firm. Review its people. Build a sales pack that feels personal.</p></header>
     <form className="intake" onSubmit={add}><h2>Add a firm</h2><label>Firm website<input name="website" required maxLength={2048} placeholder="firm.com.au" /></label>
       <label>Display name (optional)<input name="display_name" maxLength={160} /></label><button disabled={busy}>Save firm</button></form>
-    <FindFirms onAdded={reload} />
+    {SHOW_FIND_FIRMS && <FindFirms onAdded={reload} />}
     {error && <div role="alert" className="error-banner">{error} <button onClick={() => { setError(''); reload() }}>Refresh</button></div>}
     <div className="prospect-grid"><aside className="directory"><h2>Firms <span className="badge">{firms.length}</span></h2>
       <label>Filter directory<input value={query} onChange={e => search(e.target.value)} placeholder="Name or website" /></label>
@@ -129,7 +134,8 @@ export default function Prospects() {
     <section className="workspace">{detail && detail.id === id
       ? <><p className="connection-status" role="status">{liveState === 'live' ? 'Live updates connected' : 'Live updates reconnecting · periodic polling available'}</p>
         <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} lastPollAt={lastPollAt} /></>
-      : <><h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></>}</section></div>
+      : <div className="workspace-empty"><span className="empty-icon"><img src={firmIcon} alt="" width="24" height="24" /></span>
+        <h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></div>}</section></div>
   </main>
   </div>
 }
@@ -213,6 +219,8 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
   const count = countRecords(selected) + apolloSelected.length + webSelected.length
   const [webSearch, setWebSearch] = useState(true)
   const [reputation, setReputation] = useState(true)
+  // Apollo enrichment spends a credit, so it starts unticked.
+  const [enrichApollo, setEnrichApollo] = useState(false)
   useEffect(() => { onDirty(dirty) }, [dirty, onDirty])
   useEffect(() => {
     function warn(e) { if (dirty) { e.preventDefault(); e.returnValue = '' } }
@@ -238,15 +246,18 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
     const result = await mutate(`/${detail.id}/research`, reusePages
       ? { reuse_pages: true, web_search: false, reputation: false } : { web_search: webSearch, reputation })
     if (result) setNotice(reusePages ? 'Re-extraction started. Records will update here.' : 'Research started. Page coverage and results will update here.')
+    // Enrich after research has started, so an Apollo error stays on screen and never blocks research.
+    if (result && !reusePages && enrichApollo && detail.apollo_configured) await mutate(`/${detail.id}/apollo/enrich`, { refresh: Boolean(detail.apollo_org) })
   }
   return <>
     <div className="research-toolbar"><div><h3>Research sources</h3><p>Read up to 12 priority website pages. Enabled OpenAI searches run alongside the crawl; each source adds paid usage.</p>
       <label className="choice"><input type="checkbox" checked disabled /> Website crawl and record extraction</label>
       <label className="choice"><input type="checkbox" checked={webSearch} disabled={locked} onChange={e => setWebSearch(e.target.checked)} /> OpenAI wider web search</label>
-      <label className="choice"><input type="checkbox" checked={reputation} disabled={locked} onChange={e => setReputation(e.target.checked)} /> Public reputation search (not a verified Google review sample)</label></div>
+      <label className="choice"><input type="checkbox" checked={reputation} disabled={locked} onChange={e => setReputation(e.target.checked)} /> Public reputation search (not a verified Google review sample)</label>
+      <label className="choice"><input type="checkbox" checked={enrichApollo} disabled={locked || !detail.apollo_configured} onChange={e => setEnrichApollo(e.target.checked)} /> Enrich with Apollo (1 credit){!detail.apollo_configured && ' · Apollo not configured'}</label></div>
       <div className="toolbar-actions">
         {detail.pages_saved > 0 && <button type="button" className="secondary" disabled={locked || dirty} onClick={() => runResearch(true)}>Re-extract from {detail.pages_saved} saved pages</button>}
-        <button type="button" disabled={locked || dirty} onClick={() => runResearch(false)}>{detail.status === 'researching' ? 'Researching…' : 'Run website research'}</button></div></div>
+        <button type="button" disabled={locked || dirty} onClick={() => runResearch(false)}>{detail.status === 'researching' ? 'Researching…' : 'Run research'}</button></div></div>
     {notice && detail.status === 'researching' && <p role="status">{notice}</p>}
     {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.status !== 'researching' && 'Last run: '}{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${total} records · ${detail.records.people.length} people · ${detail.web_findings?.length || 0} web findings`}</p>}
     {detail.research_meta?.sources && <ResearchProgress meta={detail.research_meta} active={detail.status === 'researching'} lastPollAt={lastPollAt} />}
@@ -263,8 +274,8 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
         <a href={`${base}/${detail.id}/brand-assets/${asset.id}`} download>Download logo</a></label>)}</div>
       {!detail.brand_assets.length && <p>No logo saved. Research will try to collect a published website logo.</p>}
       <div className="section-title"><h3>Review and edit research records</h3><small>Each record keeps its source page. Your corrections are labelled as rep edits.</small></div>
-      {!total && <p>Run website research to populate the firm's practice areas, people, offices and facts.</p>}
-      {total > 0 && recordKinds.map(([kind, title]) => <div key={kind}><h3 className="category-heading">{title} <span className="badge">{records[kind].length}</span></h3>
+      {!total && <p>Run research to populate the firm's practice areas, people, offices and facts.</p>}
+      {total > 0 && recordKinds.map(([kind, title]) => <details key={kind} className="record-category"><summary><h3 className="category-heading">{title} <span className="badge">{records[kind].length}</span></h3></summary>
         {!records[kind].length && <p className="muted">None found on the website.</p>}
         <div className="finding-list">{records[kind].map(record => <article className="finding-card" key={record.id}>
           <label className="choice"><input type="checkbox" checked={selected[kind].includes(record.id)} disabled={locked}
@@ -284,7 +295,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
           {record.original && <span className="badge">Rep edited · the source shows the original website record</span>}
           <div className="source-links"><a href={record.source.url} target="_blank" rel="noreferrer">{record.source.title || 'Website source'} ↗</a></div>
           <details><summary>Original supporting passage</summary><blockquote>{record.evidence}</blockquote></details>
-        </article>)}</div></div>)}
+        </article>)}</div></details>)}
       <div className="review-actions"><button disabled={locked || !dirty}>Save research edits</button>
         <span role="status">{dirty ? 'Unsaved edits — save before approving or re-running research.' : 'All edits saved.'}</span></div>
     </form>
@@ -409,14 +420,16 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
           <a href={`${base}/${detail.id}/proposals/${approval.id}/demo-export`}>Download approved firm and staff JSON</a>
         </details>}
         <fieldset><legend>What should we create?</legend>{Object.entries(formatLabels).map(([format, label]) =>
-          <label className="format-option" key={format}><input type="checkbox" checked={formats.includes(format)} disabled={busy}
+          <label className="format-option" key={format}><input type="checkbox" checked={formats.includes(format)}
+            disabled={busy || (format === 'video' && !detail.sendspark_configured)}
             onChange={e => setFormats(e.target.checked ? [...formats, format] : formats.filter(f => f !== format))} />
-            <span><strong>{label}</strong><small>.{format} · {format === 'pdf' ? 'Prospective demo welcome guide' : 'Editable sales material'}</small></span></label>)}</fieldset>
+            <span><strong>{label}</strong><small>{format === 'video' && !detail.sendspark_configured ? 'Sendspark is not configured on the server' : formatHints[format]}</small></span></label>)}</fieldset>
         <label>Branding for this run<select value={logo} disabled={busy} onChange={e => setLogo(e.target.value)}>
           <option value="">No firm logo</option>{detail.brand_assets.map(asset => <option key={asset.id} value={asset.id}>Saved firm logo #{asset.id}</option>)}</select></label>
         <label>Sales instructions<textarea maxLength={6000} rows={5} value={instructions} disabled={busy} onChange={e => setInstructions(e.target.value)}
           placeholder="Who is the audience? What should we demonstrate? e.g. Prepare a partner-level discussion focused on family law and a proposed pilot. Do not invent pricing." /></label>
         <p className="muted">This sends the approved records to OpenAI to write the copy; the logo stays with our templates. Each generation makes one paid API call. No emails or invitations are sent.</p>
+        {formats.includes('video') && <p className="muted">The video sends only the firm name and website to Sendspark and uses Sendspark video minutes (beyond the plan's allowance, Sendspark charges). Rendering can take several minutes.</p>}
         <button disabled={busy || running || !formats.length || !approval}>{running ? 'Generation in progress…' : 'Generate selected outputs'}</button>
       </form>}
     {notice && <p role="status">{notice}</p>}
@@ -426,7 +439,8 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
       <p>{job.stage} · {job.created_at} UTC</p>{job.error && <p role="alert">{job.error}</p>}
       {job.instructions && <details><summary>Sales instructions</summary><p>{job.instructions}</p></details>}
       <ul className="file-list">{job.files.map(file => <li key={file.id}><strong>{formatLabels[file.format]}</strong>
-        {file.status === 'ready' ? <a href={`${base}/${detail.id}/outputs/${job.id}/files/${file.id}`}>Download .{file.format} · {Math.ceil(file.size / 1024)} KB</a>
+        {file.status === 'ready' && file.url ? <a href={file.url} target="_blank" rel="noreferrer">Watch video ↗</a>
+          : file.status === 'ready' ? <a href={`${base}/${detail.id}/outputs/${job.id}/files/${file.id}`}>Download .{file.format} · {Math.ceil(file.size / 1024)} KB</a>
           : <span>{file.error || file.stage || file.status}</span>}
         {file.started_at && <small className="file-progress">{elapsed(file)} elapsed
           {file.status === 'running' && file.updated_at && ` · Last activity ${Math.max(0, Math.floor((now - Date.parse(file.updated_at)) / 1000))}s ago`}</small>}
