@@ -1,9 +1,18 @@
 import unittest
 from unittest.mock import Mock, patch
+
 from pydantic import ValidationError
 
-from firm_research import (Finding, FirmProfile, Person, ResearchConnectionError, ResearchError, canonical_url,
-                           crawl_site, download_logo, extract_profile, fetch_public, fetch_resource, grounded_findings)
+from firm_research import (FirmProfile, Office, Person, PracticeArea, ResearchConnectionError, ResearchError,
+                           canonical_url, crawl_site, download_logo, extract_profile, fetch_public, fetch_resource,
+                           grounded_profile)
+
+PAGE = {"id": 1, "url": "https://firm.example/jane", "title": "Jane",
+        "text": "Biography: Jane Smith is a family law Partner. Call (02) 1111 2222."}
+
+
+def profile(**records):
+    return FirmProfile(**{"facts": [], "practice_areas": [], "people": [], "offices": [], **records})
 
 
 class FirmResearchTests(unittest.TestCase):
@@ -43,31 +52,28 @@ class FirmResearchTests(unittest.TestCase):
         self.assertNotIn("https://firm.example/private/", calls)
         self.assertEqual(len(warnings), 1)
 
-    def test_unverifiable_findings_are_excluded(self):
-        good = Finding(category="Lawyers and staff", title="Jane Smith",
-                       detail="Jane is a partner.", page_id=1,
-                       evidence_quote="Jane Smith is a family law partner.")
+    def test_unverifiable_records_are_excluded(self):
+        good = PracticeArea(name="Family law", description="Family law advice.", services=[], page_id=1,
+                            evidence_quote="Jane Smith is a family law Partner.")
         bad = good.model_copy(update={"evidence_quote": "Jane was admitted to practice in 1990."})
-        findings, rejected = grounded_findings(FirmProfile(findings=[good, bad]),
-            [{"id": 1, "url": "https://firm.example/jane", "title": "Jane",
-              "text": "Biography: Jane Smith is a family law partner."}])
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(rejected, 1)
-        self.assertEqual(findings[0]["title"], "Jane Smith")
+        wrong_page = good.model_copy(update={"page_id": 2})
+        records, rejected = grounded_profile(profile(practice_areas=[good, bad, wrong_page]), [PAGE])
+        self.assertEqual([area["name"] for area in records["practice_areas"]], ["Family law"])
+        self.assertEqual(records["practice_areas"][0]["page_id"], 1)
+        self.assertEqual(rejected, 2)
 
-    def test_staff_role_and_contact_must_be_published(self):
-        person = Person(full_name="Jane Smith", position="Partner", biography=None,
-                        qualifications=[], practice_areas=["Family law"],
-                        public_work_email="guessed@firm.example", public_work_phone=None)
-        finding = Finding(category="Lawyers and staff", title="Jane Smith",
-                          detail="Jane Smith is a Partner.", page_id=1,
-                          evidence_quote="Jane Smith is a Partner.", person=person)
-        findings, rejected = grounded_findings(FirmProfile(findings=[finding]),
-            [{"id": 1, "url": "https://firm.example/jane", "title": "Jane",
-              "text": "Jane Smith is a Partner."}])
-        self.assertEqual(findings[0]["person"]["position"], "Partner")
-        self.assertIsNone(findings[0]["person"]["public_work_email"])
-        self.assertEqual(rejected, 1)
+    def test_staff_role_and_contacts_must_be_published(self):
+        person = Person(full_name="Jane Smith", position="Partner", biography=None, qualifications=[],
+                        practice_areas=["Family law"], public_work_email="guessed@firm.example",
+                        public_work_phone=None, page_id=1, evidence_quote="Jane Smith is a family law Partner.")
+        office = Office(name="Gosford", address=None, phone="(02) 1111 2222", email="guess@firm.example",
+                        page_id=1, evidence_quote="Call (02) 1111 2222.")
+        records, rejected = grounded_profile(profile(people=[person], offices=[office]), [PAGE])
+        self.assertEqual(records["people"][0]["position"], "Partner")
+        self.assertIsNone(records["people"][0]["public_work_email"])
+        self.assertEqual(records["offices"][0]["phone"], "(02) 1111 2222")
+        self.assertIsNone(records["offices"][0]["email"])
+        self.assertEqual(rejected, 2)
 
     def test_logo_rejects_html_disguised_as_png(self):
         with patch("firm_research.fetch_resource", return_value=(

@@ -65,6 +65,11 @@
 .prospects button:hover:not(:disabled) { background: var(--blue-700); }
 .prospects button:disabled { background: var(--grey-100); color: var(--grey-700); cursor: not-allowed; }
 
+/* Secondary action (re-extract from saved pages) and the research toolbar's button group */
+.prospects button.secondary { background: var(--grey-50); color: var(--grey-800); border-color: var(--grey-100); }
+.prospects button.secondary:hover:not(:disabled) { background: var(--grey-100); }
+.prospects .toolbar-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
 /* Layout */
 .prospects .prospect-grid { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 24px; align-items: start; }
 .prospects .directory { padding: 29px; position: sticky; top: 16px; }

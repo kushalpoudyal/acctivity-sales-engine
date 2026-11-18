@@ -1,28 +1,17 @@
 import asyncio
-import io
-import json
 import os
 import tempfile
 import unittest
-import zipfile
 from pathlib import Path
-from types import SimpleNamespace as Record
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from uuid import uuid4
-from threading import Barrier
 
 from fastapi import BackgroundTasks, HTTPException
 
 import outputs
 import prospects
-
-
-def word_bytes():
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w") as archive:
-        archive.writestr("[Content_Types].xml", "<Types/>")
-        archive.writestr("word/document.xml", "<document><p>Firm proposal</p></document>")
-    return buffer.getvalue()
+from test_documents import COPY
+from test_prospects import PAGES, RECORDS
 
 
 class OutputTests(unittest.TestCase):
@@ -32,12 +21,11 @@ class OutputTests(unittest.TestCase):
         self.enterContext(patch.dict(os.environ, {"OPENAI_API_KEY": "test-not-a-real-key"}))
         prospects.initialize()
         self.firm = prospects.add_firm(prospects.Intake(website="firm.example"))
-        finding = {"text": "Fictional practice", "sources": [{"url": "https://firm.example/"}]}
         with prospects.database() as db:
-            db.execute("UPDATE firms SET brief=? WHERE id=?", (json.dumps([finding]), self.firm["id"]))
+            prospects.store_research(db, self.firm["id"], PAGES, RECORDS)
         detail = prospects.get_firm(self.firm["id"])
         self.approval = prospects.approve(self.firm["id"], prospects.Approval(
-            brief_token=detail["brief_token"], findings=[0]))
+            brief_token=detail["brief_token"], people=[p["id"] for p in detail["records"]["people"]]))
 
     def request_body(self, **kwargs):
         return outputs.OutputRequest(approval_id=self.approval["id"], formats=["docx", "pdf"],
@@ -57,30 +45,36 @@ class OutputTests(unittest.TestCase):
             outputs.create_outputs(self.firm["id"] + 1, self.request_body(), BackgroundTasks())
         self.assertEqual(wrong_firm.exception.status_code, 404)
 
-    def test_partial_run_saves_valid_file_with_missing_size_and_cleans_container(self):
+    def test_outputs_are_built_from_templates_and_survive_restart(self):
         tasks = BackgroundTasks()
         job = outputs.create_outputs(self.firm["id"], self.request_body(), tasks)
-        docx = word_bytes()
-        with patch("outputs.openai.OpenAI") as factory:
-            client = factory.return_value.__enter__.return_value
-            client.containers.create.side_effect = [Record(id="cntr-docx"), Record(id="cntr-pdf")]
-            client.responses.stream.return_value.__enter__.return_value.get_final_response.return_value = Record(status="completed")
-            client.containers.files.list.return_value = [
-                Record(id="doc", path="/mnt/data/proposal.docx", bytes=None)]
-            client.containers.files.content.retrieve.return_value.read.return_value = docx
+        with patch("outputs.write_copy", return_value=COPY) as write_copy:
             asyncio.run(tasks())
-            self.assertEqual(client.containers.delete.call_count, 2)
-            self.assertEqual({call.args[0] for call in client.containers.delete.call_args_list},
-                             {"cntr-docx", "cntr-pdf"})
-        detail = prospects.get_firm(self.firm["id"])
-        run = detail["outputs"][0]
-        self.assertEqual(run["status"], "partial")
+        self.assertEqual(write_copy.call_args.args[0]["people"][0]["full_name"], "Jane Smith")
+        run = prospects.get_firm(self.firm["id"])["outputs"][0]
+        self.assertEqual(run["status"], "ready")
+        self.assertTrue(all(f["stage"] == "Download saved" and f["started_at"] and f["finished_at"]
+                            for f in run["files"]))
         file = next(f for f in run["files"] if f["format"] == "docx")
-        self.assertEqual(outputs.download_output(self.firm["id"], job["id"], file["id"]).body, docx)
+        data = outputs.download_output(self.firm["id"], job["id"], file["id"]).body
+        outputs.validate_document(data, "docx")
         with self.assertRaises(HTTPException):
             outputs.download_output(self.firm["id"] + 1, job["id"], file["id"])
         prospects.initialize()
-        self.assertEqual(outputs.download_output(self.firm["id"], job["id"], file["id"]).body, docx)
+        self.assertEqual(outputs.download_output(self.firm["id"], job["id"], file["id"]).body, data)
+
+    def test_one_failing_template_keeps_the_other_formats(self):
+        tasks = BackgroundTasks()
+        outputs.create_outputs(self.firm["id"], self.request_body(), tasks)
+        with patch("outputs.write_copy", return_value=COPY), patch.dict(
+            outputs.RENDERERS, {"pdf": Mock(side_effect=RuntimeError("template bug"))}
+        ), self.assertLogs(level="ERROR"):
+            asyncio.run(tasks())
+        run = prospects.get_firm(self.firm["id"])["outputs"][0]
+        self.assertEqual(run["status"], "partial")
+        pdf = next(f for f in run["files"] if f["format"] == "pdf")
+        self.assertEqual(pdf["status"], "failed")
+        self.assertIn("Could not build the PDF", pdf["error"])
 
     def test_provider_failure_has_terminal_job_and_file_states(self):
         tasks = BackgroundTasks()
@@ -95,20 +89,3 @@ class OutputTests(unittest.TestCase):
         for format in ("pptx", "docx", "pdf"):
             with self.subTest(format=format), self.assertRaises(outputs.DeckError):
                 outputs.validate_document(b"this is not a document", format)
-
-    def test_selected_formats_start_in_parallel_and_save_independently(self):
-        body = self.request_body().model_copy(update={"formats": ["pptx", "docx", "pdf"]})
-        tasks = BackgroundTasks()
-        outputs.create_outputs(self.firm["id"], body, tasks)
-        barrier = Barrier(3)
-
-        def generate(job_id, job, format):
-            barrier.wait(timeout=3)
-            outputs.save_file(job_id, format, b"saved fixture", None)
-
-        with patch("outputs.generate_file", side_effect=generate) as build:
-            asyncio.run(tasks())
-        self.assertEqual(build.call_count, 3)
-        run = prospects.get_firm(self.firm["id"])["outputs"][0]
-        self.assertEqual(run["status"], "ready")
-        self.assertTrue(all(f["status"] == "ready" and f["finished_at"] for f in run["files"]))

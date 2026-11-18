@@ -35,9 +35,15 @@ class ScriptedApollo(FakeApollo):
         return httpx.Response(status, json=payload)
 
 
-def brief_with(*people):
-    return [{"text": f"{p['full_name']} works here", "person": p, "sources": [{"url": "https://firm.example/team"}],
-             "evidence": f"{p['full_name']} works here"} for p in people]
+PAGE = {"id": 1, "url": "https://firm.example/team", "title": "Team", "text": "team"}
+
+
+def records_with(*people):
+    """Website research records naming these people on one page, with Family law as the practice area."""
+    return {"facts": [], "offices": [],
+            "practice_areas": [{"name": "Family law", "description": "Family law advice.", "services": [],
+                                "page_id": 1, "evidence": "team"}],
+            "people": [{**p, "page_id": 1, "evidence": f"{p['full_name']} works here"} for p in people]}
 
 
 class ContactTests(unittest.TestCase):
@@ -53,37 +59,41 @@ class ContactTests(unittest.TestCase):
         return prospects.add_firm(prospects.Intake(website="firm.example"))["id"]
 
     def research(self, firm_id, *people):
-        with patch("prospects.crawl_site", return_value=([{"url": "https://firm.example/team", "title": "Team",
-                                                            "text": "team"}], [])), \
-                patch("prospects.extract_profile", return_value=(brief_with(*people), 0)), \
+        with patch("prospects.crawl_site", return_value=([PAGE], [])), \
+                patch("prospects.extract_profile", return_value=(records_with(*people), 0)), \
                 patch("prospects.openai.OpenAI"):
             prospects.research(firm_id, "firm.example",
                                prospects.ResearchOptions(web_search=False, reputation=False))
 
-    def staff(self, firm_id):
-        return prospects.get_firm(firm_id)["staff"]
+    def contacts(self, firm_id):
+        return prospects.get_firm(firm_id)["apollo_contacts"]
+
+    def people(self, firm_id):
+        return prospects.get_firm(firm_id)["records"]["people"]
 
     def reveal(self, firm_id, *matches):
         with ScriptedApollo((200, {"matches": list(matches)})):
             return prospects.apollo_reveal(firm_id, prospects.ApolloReveal(ids=[m["id"] for m in matches]))
 
-    def test_migration_adds_apollo_columns_to_existing_staff_table(self):
-        with sqlite3.connect(prospects.DB_PATH) as db:
-            db.execute("""CREATE TABLE staff (id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL,
-                          full_name TEXT NOT NULL, position TEXT, public_work_email TEXT, public_work_phone TEXT,
-                          profile TEXT NOT NULL, source_url TEXT NOT NULL, evidence TEXT NOT NULL,
-                          UNIQUE(firm_id,full_name))""")
-            db.execute("""INSERT INTO staff(firm_id,full_name,profile,source_url,evidence)
-                          VALUES(1,'Old Person','{}','https://firm.example','x')""")
-        db.close()
-        prospects.initialize()
-        prospects.initialize()
+    def test_contacts_revealed_into_the_earlier_staff_table_are_migrated(self):
+        firm_id = self.firm()
         with prospects.database() as db:
-            row = dict(db.execute("SELECT * FROM staff").fetchone())
-        self.assertEqual(row["source"], "website")
-        for column in ("apollo_id", "linkedin_url", "email_status", "match_confidence", "apollo_email"):
-            self.assertIsNone(row[column])
-
+            db.execute("""CREATE TABLE staff (id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL,
+                          full_name TEXT NOT NULL, position TEXT, profile TEXT NOT NULL, source_url TEXT NOT NULL,
+                          evidence TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'website', apollo_id TEXT,
+                          linkedin_url TEXT, email_status TEXT, match_confidence TEXT, apollo_email TEXT,
+                          apollo_revealed_at TEXT)""")
+            db.execute("""INSERT INTO staff(firm_id,full_name,profile,source_url,evidence)
+                          VALUES(?,'Website Only','{}','https://firm.example','x')""", (firm_id,))
+            db.execute("""INSERT INTO staff(firm_id,full_name,position,profile,source_url,evidence,source,apollo_id,
+                          apollo_email,email_status,apollo_revealed_at)
+                          VALUES(?,'Jane Smith','Director','{}','','','apollo','ap-jane','jane@firm.example',
+                          'verified','2026-11-18 09:30:00')""", (firm_id,))
+        prospects.initialize()
+        prospects.initialize()
+        [jane] = self.contacts(firm_id)
+        self.assertEqual((jane["apollo_id"], jane["full_name"], jane["apollo_email"], jane["apollo_revealed_at"]),
+                         ("ap-jane", "Jane Smith", "jane@firm.example", "2026-11-18 09:30:00"))
     def test_candidates_by_title_mark_already_revealed_people(self):
         firm_id = self.firm()
         self.reveal(firm_id, JANE)
@@ -145,9 +155,9 @@ class ContactTests(unittest.TestCase):
         self.assertFalse(fake.body(0)["reveal_phone_number"])
         self.assertEqual((result["requested"], result["matched"], result["with_email"]), (12, 11, 11))
         self.assertEqual(result["unmatched_ids"], ["ap-11"])
-        staff = self.staff(firm_id)
-        self.assertEqual(len(staff), 11)
-        self.assertTrue(all(p["source"] == "apollo" and p["apollo_email"] for p in staff))
+        contacts = self.contacts(firm_id)
+        self.assertEqual(len(contacts), 11)
+        self.assertTrue(all(c["apollo_email"] and c["person_id"] is None for c in contacts))
 
     def test_failed_batch_keeps_earlier_paid_batches(self):
         firm_id = self.firm()
@@ -158,7 +168,7 @@ class ContactTests(unittest.TestCase):
                 prospects.apollo_reveal(firm_id, prospects.ApolloReveal(ids=ids))
         self.assertEqual(error.exception.status_code, 429)
         self.assertIn("1 people from earlier batches were saved", error.exception.detail)
-        self.assertEqual([p["full_name"] for p in self.staff(firm_id)], ["Ann Example"])
+        self.assertEqual([c["full_name"] for c in self.contacts(firm_id)], ["Ann Example"])
 
     def test_double_reveal_is_refused_without_a_request(self):
         firm_id = self.firm()
@@ -170,40 +180,34 @@ class ContactTests(unittest.TestCase):
         self.assertIn("Jane Smith", error.exception.detail)
         self.assertEqual(fake.requests, [])
 
-    def test_reveal_merges_into_website_row_case_insensitively(self):
+    def test_reveal_links_to_the_website_person_case_insensitively(self):
         firm_id = self.firm()
         self.research(firm_id, PERSON)
         self.reveal(firm_id, {**JANE, "name": "JANE SMITH"})
-        [row] = self.staff(firm_id)
-        self.assertEqual((row["full_name"], row["source"], row["position"]), ("Jane Smith", "both", "Partner"))
-        self.assertEqual(row["profile"]["practice_areas"], ["Family law"])
-        self.assertEqual(row["evidence"], "Jane Smith works here")
-        self.assertEqual((row["apollo_email"], row["linkedin_url"], row["match_confidence"]),
+        [contact], [person] = self.contacts(firm_id), self.people(firm_id)
+        self.assertEqual(contact["person_id"], person["id"])
+        self.assertEqual((contact["apollo_email"], contact["linkedin_url"], contact["match_confidence"]),
                          ("jane@firm.example", JANE["linkedin_url"], "high"))
-
-    def test_research_merges_into_apollo_row_case_insensitively(self):
+        self.assertEqual((person["full_name"], person["position"], person["biography"]),
+                         ("Jane Smith", "Partner", "Family lawyer"))
+    def test_research_links_to_an_earlier_contact_case_insensitively(self):
         firm_id = self.firm()
         self.reveal(firm_id, JANE)
         self.research(firm_id, {**PERSON, "full_name": "jane smith"})
-        [row] = self.staff(firm_id)
-        self.assertEqual((row["source"], row["apollo_id"], row["apollo_email"]), ("both", "ap-jane", "jane@firm.example"))
-        self.assertEqual((row["position"], row["profile"]["biography"]), ("Partner", "Family lawyer"))
-
-    def test_re_research_keeps_apollo_contacts_and_drops_stale_website_rows(self):
+        [contact], [person] = self.contacts(firm_id), self.people(firm_id)
+        self.assertEqual((contact["person_id"], contact["apollo_email"]), (person["id"], "jane@firm.example"))
+        self.assertEqual((person["position"], person["biography"]), ("Partner", "Family lawyer"))
+    def test_re_research_keeps_apollo_contacts_and_relinks_them(self):
         firm_id = self.firm()
         tom = {**PERSON, "full_name": "Tom Old", "biography": "Left the firm"}
         self.research(firm_id, PERSON, tom)
         self.reveal(firm_id, JANE, {"id": "ap-ann", "name": "Ann Example", "email": "ann@firm.example"})
-        self.research(firm_id)  # the site no longer lists anyone: brief is empty, nothing changes
-        self.assertEqual(len(self.staff(firm_id)), 3)
         self.research(firm_id, {**PERSON, "full_name": "Kim New"})
-        rows = {p["full_name"]: p for p in self.staff(firm_id)}
-        self.assertEqual(sorted(rows), ["Ann Example", "Jane Smith", "Kim New"])
-        self.assertEqual((rows["Jane Smith"]["source"], rows["Jane Smith"]["apollo_email"]), ("apollo", "jane@firm.example"))
-        self.assertEqual(rows["Jane Smith"]["profile"], {})
-        self.assertEqual(rows["Ann Example"]["source"], "apollo")
-        self.assertEqual(rows["Kim New"]["source"], "website")
-
+        self.assertEqual([p["full_name"] for p in self.people(firm_id)], ["Kim New"])
+        contacts = {c["full_name"]: c for c in self.contacts(firm_id)}
+        self.assertEqual(sorted(contacts), ["Ann Example", "Jane Smith"])
+        self.assertEqual((contacts["Jane Smith"]["apollo_email"], contacts["Jane Smith"]["person_id"]),
+                         ("jane@firm.example", None))
     def test_not_configured_spends_nothing(self):
         firm_id = self.firm()
         with ScriptedApollo() as fake, patch.dict(os.environ, {"APOLLO_API_KEY": ""}):

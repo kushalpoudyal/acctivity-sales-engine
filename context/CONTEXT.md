@@ -29,8 +29,68 @@ Decisions and progress go in `LOG.md` (append-only).
 
 ## Stack
 
-- Front end: **React** interface to feed in the data (Kushal 18/11).
-- Back end (holds API keys, runs research + generation): **Python + FastAPI** (Kushal 18/11).
+- Front end: **React** interface to feed in the data (Kushal 18/11). As built: Vite + React in `Hack_A_CLIENT/`.
+- Back end (holds API keys, runs research + generation): **Python + FastAPI** (Kushal 18/11). As built: `Hack_A_API/api/`.
+- As built (Paul 18/11): **OpenAI** for research + deck generation, **SQLite** (`prospects.sqlite3`, gitignored) for storage.
+
+## What's built (Paul, 18/11: commits 1f68148, 19549a9, ed2fa2a)
+
+Local prototype, single process, **no auth** (keep both dev servers on loopback). Details in `Hack_A_API/api/README.md`.
+
+**Flow = input approach 1 (website only):** add firm → research its website → review + edit + approve records → generate branded PPTX / DOCX / PDF, or a demo export.
+
+**API** (`Hack_A_API/api/`, FastAPI on `127.0.0.1:9001`, docs at `/docs`):
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| GET | `/health`, `/openai/test` | health check; OpenAI connection test |
+| POST | `/api/v1/firms` | save a firm (website + optional display name) |
+| GET | `/api/v1/firms`, `/api/v1/firms/{id}` | list firms; firm detail (records, logos, approvals, output runs, status) |
+| POST | `/api/v1/firms/{id}/research` | crawl the site, then a **paid** OpenAI extraction; `{"reuse_pages": true}` re-extracts saved pages without crawling; async (202), poll detail until `status` ≠ `researching` |
+| PUT | `/api/v1/firms/{id}/brief` | save rep edits to the firm name, preferred logo and records |
+| GET | `/api/v1/firms/{id}/brand-assets/{asset_id}` | saved logo |
+| POST | `/api/v1/firms/{id}/approvals` | approve the selected records → frozen snapshot (no paid call) |
+| POST | `/api/v1/firms/{id}/outputs` | **paid** copy call + brand templates → PPTX / DOCX / PDF (async, 202); download from `.../outputs/{job}/files/{file}` |
+| POST | `/api/v1/firms/{id}/proposals/{proposal_id}/build` | build the `.pptx` (async, 202) |
+| GET | `/api/v1/firms/{id}/proposals/{proposal_id}/download` | download the `.pptx` |
+| GET | `/api/v1/firms/{id}/proposals/{proposal_id}/demo-export` | JSON staging payload of approved records + logo links |
+
+- **Research (`firm_research.py`):** obeys robots.txt; firm's own domain (+www) only; prioritises staff/about/contact/service pages;
+  stops at 32 pages / 240k chars / 150 s; no login, JavaScript rendering or PDFs (so Cloudflare-challenged sites such as
+  mallesons.com return nothing). Logos (PNG/JPEG/WebP, same domain, ≤1.5 MB) are saved in `brand_assets`, not hotlinked.
+- **Research data (normalised, Kushal 18/11):** SQLite tables `pages` (crawled text, reused for re-extraction),
+  `practice_areas` (+ `services`), `people`, `person_practice_areas`, `offices` and `facts` (overview / history / credential /
+  clients / approach). Every record cites its page + a verbatim passage checked against it; rep edits keep the extracted
+  values in `original`. Approvals freeze the selected records as a JSON snapshot (`version: 2`).
+- **Outputs (`outputs.py` + `documents.py`, Kushal 18/11):** one paid OpenAI call writes short copy (title, summary,
+  proposed opportunities, pilot, next steps, demo agenda) from the approved records; our own templates build the PPTX
+  (16:9 proposal), DOCX (A4 proposal) and PDF (A4 welcome guide). No Code Interpreter container. The older
+  `proposals/{id}/build` endpoint uses the same PPTX template.
+- **Brand kit (`Hack_A_API/api/brand/`, Kushal 18/11):** Acctivity logo + "Acc" mark, palette (Slate Grey `#3D443D`,
+  Steel Blue `#4396BA`, accents Light Pink/Gold/Rouge/Light Grey), Lora headings + Inter body, watercolour illustrations
+  and background. `brand/BRAND.md` is the guide the templates implement. Generated material uses Acctivity colours only
+  (prospect logo optional, cover only). PDF embeds the fonts; PPTX/DOCX need Lora + Inter installed, else serif/sans fallback.
+- **Apollo (optional, click-to-spend; `apollo.py`, `find_firms.py`, `apollo_findings.py`):** firm enrichment (1 credit,
+  stored on the firm), free people search, email reveal (1 credit per person, batches of 10, never twice) into an
+  `apollo_contacts` table kept apart from website research and linked to `people` by name; industries, keywords, tech
+  stack and contacts are approvable Apollo findings (`apollo` in the snapshot), shown in outputs as Apollo-reported.
+  Revealed emails never go to OpenAI. **Find firms** searches Apollo for small/medium law firms (1 credit/page).
+- **Demo export:** our own JSON schema, **not** an Acctivity import contract; creates no tenants/users and sends no invites.
+- **Models:** research + deck default `gpt-6.1-sol`; override with `OPENAI_MODEL`, or per step `OPENAI_RESEARCH_MODEL` /
+  `OPENAI_DECK_MODEL`. Only `OPENAI_API_KEY` is required (`.env`). The README and `.env.example` also mention
+  `gpt-5.4-mini` as the default; in code that's only the `/openai/test` fallback.
+- Tests: `test_firm_research.py`, `test_prospects.py`, `test_outputs.py`, `test_documents.py` (24 tests).
+
+**Client** (`Hack_A_CLIENT/`, Vite dev server on `127.0.0.1:5173`, proxies `/api/v1` → `:9001`):
+- `/prospects`: live directory (`Prospects.jsx`): add/filter firms, run or re-extract research, review/edit records by kind
+  (practice areas, people with linked areas, offices, facts) with source links, approve, generate + download PPTX/DOCX/PDF.
+- Find firms panel (Apollo search, review list, add to directory) and Apollo panels in the Research tab
+  (enrich, find people, reveal emails, Apollo contacts table, review Apollo findings).
+- `/sales-studio.html`: clickable **mockup** of the full sales engine (browse firms, add one with optional **Apollo**
+  enrichment, simulated research + output). Fictional data, no API calls.
+- Landing page with a checklist (in-memory).
+
+**Not built yet:** Sendspark/videos, per-prospect images (outputs use the brand illustrations), Acctivity product content for proposals, live Acctivity demo environment, auth.
 
 ## Notes on the feed (Claude, 18/11, unverified until probed)
 
@@ -56,14 +116,18 @@ Decisions and progress go in `LOG.md` (append-only).
 - Q1: ~~repo name, visibility~~ answered: acctivity-sales-engine, public
 - Q2: what "prospects" means as an output
 - Q3: input shape: website URL only (per brief), or also a name/LinkedIn/CSV list?
-- Q4: does "tailored demo environment" (in the brief) stay in scope?
-- Q5: LLM provider / image generation / slide-deck tool. Video candidate: **Sendspark** (see `SENDSPARK.md`)
+  As built: website + optional display name.
+- Q4: does "tailored demo environment" (in the brief) stay in scope? As built: JSON demo export only;
+  a live Acctivity environment needs an agreed deployment API, required fields and a safe demo-account policy.
+- Q5: LLM provider / image generation / slide-deck tool. As built: OpenAI for research + copy; our own python-pptx /
+  python-docx / reportlab templates for the files.
+  Images still open. Video candidate: **Sendspark** (see `SENDSPARK.md`)
 - Q6: ~~approach 1 first or straight to Apollo?~~ answered 18/11: Apollo is an optional add-on (enrich + find firms), click-to-spend. Plan in LOG.md; issues #3–#7.
 
 ## Tools researched
 
 - [Product requirements](./REQUIREMENTS.md): hackathon scope, acceptance checks and optional Apollo checkbox.
-- [Technical design and implementation status](./TECHNICAL_DESIGN.md): research, approvals, structured staff/branding and container-generated PPTX/DOCX/PDF downloads.
+- [Technical design and implementation status](./TECHNICAL_DESIGN.md): research, approvals, normalised research records, branding and template-built PPTX/DOCX/PDF downloads.
 
 - **Sendspark** (videos): `SENDSPARK.md`. API + webhooks on Growth ($99/mo); fills variables into one recorded base video; async, poll or webhook.
 - **Apollo** (input approach 2): `APOLLO.md`. Org enrich (1 credit) → people search (free, names obfuscated) → people match (1 credit email, +8 mobile). Firm search: 1 credit/page, **allowed** on our plan (needs a law-practice filter to drop recruiters). Probe: `Hack_A_API/api/apollo_probe.py`.

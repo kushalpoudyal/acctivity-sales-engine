@@ -1,7 +1,9 @@
+import io
 import json
 import os
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,7 +11,8 @@ from fastapi import BackgroundTasks, HTTPException
 
 import prospects
 from apollo_findings import apollo_findings
-from test_apollo_contacts import JANE, PERSON, ScriptedApollo, brief_with
+from test_apollo_contacts import JANE, PAGE, PERSON, ScriptedApollo, records_with
+from test_documents import COPY
 
 # Fake organisation only. Tech mirrors the probe: web and IT tools, no practice-management software.
 ORG = {"name": "Firm Ltd", "industries": ["Legal Services"], "keywords": ["family law", "Family Law", "wills"],
@@ -34,13 +37,10 @@ class ApolloFindingTests(unittest.TestCase):
         return prospects.add_firm(prospects.Intake(website="firm.example"))["id"]
 
     def research(self, firm_id, *people):
-        with patch("prospects.crawl_site", return_value=([{"url": "https://firm.example/team", "title": "Team",
-                                                            "text": "team"}], [])),                 patch("prospects.extract_profile", return_value=(brief_with(*people), 0)),                 patch("prospects.openai.OpenAI"):
-            prospects.research(firm_id, "firm.example",
-                               prospects.ResearchOptions(web_search=False, reputation=False))
-
-    def staff(self, firm_id):
-        return prospects.get_firm(firm_id)["staff"]
+        with patch("prospects.crawl_site", return_value=([PAGE], [])), \
+                patch("prospects.extract_profile", return_value=(records_with(*people), 0)), \
+                patch("prospects.openai.OpenAI"):
+            prospects.research(firm_id, "firm.example", prospects.ResearchOptions(web_search=False, reputation=False))
 
     def reveal(self, firm_id, *matches):
         with ScriptedApollo((200, {"matches": list(matches)})):
@@ -51,10 +51,12 @@ class ApolloFindingTests(unittest.TestCase):
             db.execute("UPDATE firms SET apollo_org=?, apollo_enriched_at='2026-11-18 09:30:00' WHERE id=?",
                        (json.dumps(org), firm_id))
 
-    def approve(self, firm_id, findings=(), apollo_keys=()):
+    def approve(self, firm_id, apollo_keys=(), people=True):
+        """Approve the website people (when `people`) and the given Apollo finding keys."""
         detail = prospects.get_firm(firm_id)
         approval = prospects.approve(firm_id, prospects.Approval(
-            brief_token=detail["brief_token"], findings=list(findings), apollo_findings=list(apollo_keys)))
+            brief_token=detail["brief_token"], people=[p["id"] for p in detail["records"]["people"]] if people else [],
+            apollo_findings=list(apollo_keys)))
         with prospects.database() as db:
             snapshot = db.execute("SELECT snapshot FROM proposals WHERE id=?", (approval["id"],)).fetchone()[0]
         export = json.loads(prospects.demo_export(firm_id, approval["id"]).body)
@@ -84,78 +86,81 @@ class ApolloFindingTests(unittest.TestCase):
         self.enrich(firm_id)
         self.reveal(firm_id, BOB)
         chosen = ["apollo:industry:legal services", "apollo:tech:microsoft office 365", "apollo:contact:ap-bob"]
-        approval, snapshot, export = self.approve(firm_id, [0], chosen)
-        keys = [f.get("key") for f in json.loads(snapshot)["findings"]]
-        self.assertEqual(keys, [None, *chosen])
+        approval, snapshot, export = self.approve(firm_id, chosen)
+        self.assertEqual([f["key"] for f in json.loads(snapshot)["apollo"]], chosen)
         for dropped in ("Cloudflare", "Google Tag Manager", "wills"):
             self.assertNotIn(dropped, snapshot)
-        self.assertEqual([f.get("key") for f in export["findings"]], keys)
+        self.assertEqual([f["key"] for f in export["apollo"]], chosen[:2])
         bob = next(p for p in export["staff"] if p["full_name"] == "Bob Example")
         self.assertEqual((bob["apollo_email"], bob["linkedin_url"]),
                          ("bob@firm.example", "https://linkedin.example/in/bob"))
-        # The deck build receives exactly this snapshot.
+        # The deck build reads exactly this snapshot; the copy call never sees revealed emails.
         with patch.dict(os.environ, {"OPENAI_API_KEY": "test"}), \
-                patch("prospects.generate_deck", return_value=b"pptx") as build:
+                patch("prospects.write_copy", return_value=COPY) as write_copy:
             tasks = BackgroundTasks()
             prospects.start_build(firm_id, approval["id"], tasks, {})
             for task in tasks.tasks:
                 task.func(*task.args, **task.kwargs)
-        self.assertEqual(build.call_args.args[0], snapshot)
+        self.assertEqual(write_copy.call_args.args[0], json.loads(snapshot))
+        with prospects.database() as db:
+            row = db.execute("SELECT status,pptx FROM proposals WHERE id=?", (approval["id"],)).fetchone()
+        self.assertEqual(row["status"], "ready")
+        archive = zipfile.ZipFile(io.BytesIO(row["pptx"]))
+        slides = "".join(archive.read(n).decode() for n in archive.namelist() if n.startswith("ppt/slides/slide"))
+        self.assertIn("Bob Example", slides)
+        self.assertIn("Microsoft Office 365", slides)
+        self.assertNotIn("bob@firm.example", slides)
 
     def test_deselected_contact_stays_out_of_snapshot_export_and_deck(self):
         firm_id = self.firm()
         self.research(firm_id, PERSON)
-        self.reveal(firm_id, JANE)  # merges into the website row: source 'both'
-        self.assertEqual(self.staff(firm_id)[0]["source"], "both")
-        _, snapshot, export = self.approve(firm_id, [0], [])
+        self.reveal(firm_id, JANE)  # same name as the website person: linked, not merged
+        self.assertEqual(prospects.get_firm(firm_id)["apollo_contacts"][0]["person_id"],
+                         prospects.get_firm(firm_id)["records"]["people"][0]["id"])
+        _, snapshot, export = self.approve(firm_id, [])
         self.assertNotIn(JANE["email"], snapshot)
         self.assertNotIn("linkedin.example", snapshot)
         jane = export["staff"][0]
         self.assertEqual(jane["position"], "Partner")
         self.assertNotIn("apollo_email", jane)
         self.assertNotIn("linkedin_url", jane)
-        _, snapshot, export = self.approve(firm_id, [0], ["apollo:contact:ap-jane"])
+        _, snapshot, export = self.approve(firm_id, ["apollo:contact:ap-jane"])
         self.assertIn(JANE["email"], snapshot)
-        jane = export["staff"][0]
+        [jane] = export["staff"]
         self.assertEqual((jane["apollo_email"], jane["position"], jane["biography"]),
                          (JANE["email"], "Partner", "Family lawyer"))
-        self.assertEqual(len(jane["sources"]), 2)
+        self.assertTrue(jane["apollo_retrieved_at"])
 
     def test_firm_without_apollo_data_behaves_as_before(self):
         firm_id = self.firm()
         self.research(firm_id, PERSON)
         detail = prospects.get_firm(firm_id)
-        self.assertEqual(detail["apollo_findings"], [])
-        with prospects.database() as db:
-            row = db.execute("SELECT * FROM firms WHERE id=?", (firm_id,)).fetchone()
-            brief = row["brief"]
-        self.assertEqual(detail["brief_token"], prospects.revision_token(row))
-        approval = prospects.approve(firm_id, prospects.Approval(brief_token=detail["brief_token"], findings=[0]))
-        with prospects.database() as db:
-            snapshot = db.execute("SELECT snapshot FROM proposals WHERE id=?", (approval["id"],)).fetchone()[0]
-        self.assertEqual(snapshot, json.dumps({"firm": "firm.example", "domain": "firm.example",
-                                               "findings": json.loads(brief)}))
+        self.assertEqual((detail["apollo_findings"], detail["apollo_contacts"]), ([], []))
+        _, snapshot, export = self.approve(firm_id)
+        self.assertEqual(json.loads(snapshot)["apollo"], [])
+        self.assertEqual((export["apollo"], [p["full_name"] for p in export["staff"]]), ([], ["Jane Smith"]))
         with self.assertRaises(HTTPException) as empty:
-            prospects.approve(firm_id, prospects.Approval(brief_token=detail["brief_token"], findings=[]))
+            prospects.approve(firm_id, prospects.Approval(brief_token=detail["brief_token"]))
         self.assertEqual(empty.exception.status_code, 422)
 
     def test_apollo_only_firm_can_be_approved(self):
         firm_id = self.firm()
         self.enrich(firm_id)
-        _, snapshot, export = self.approve(firm_id, [], ["apollo:industry:legal services"])
-        self.assertEqual([f["key"] for f in json.loads(snapshot)["findings"]], ["apollo:industry:legal services"])
+        _, snapshot, export = self.approve(firm_id, ["apollo:industry:legal services"], people=False)
+        self.assertEqual([f["key"] for f in json.loads(snapshot)["apollo"]], ["apollo:industry:legal services"])
         self.assertEqual(export["staff"], [])
 
     def test_stale_review_and_unknown_keys_are_refused(self):
         firm_id = self.firm()
         self.research(firm_id, PERSON)
-        token = prospects.get_firm(firm_id)["brief_token"]
+        detail = prospects.get_firm(firm_id)
         self.enrich(firm_id)  # new Apollo findings appear: the reviewed set changed
         with self.assertRaises(HTTPException) as stale:
-            prospects.approve(firm_id, prospects.Approval(brief_token=token, findings=[0]))
+            prospects.approve(firm_id, prospects.Approval(brief_token=detail["brief_token"],
+                                                          people=[detail["records"]["people"][0]["id"]]))
         self.assertEqual(stale.exception.status_code, 409)
         with self.assertRaises(HTTPException) as unknown:
-            self.approve(firm_id, [0], ["apollo:tech:clio"])
+            self.approve(firm_id, ["apollo:tech:clio"])
         self.assertEqual(unknown.exception.status_code, 422)
 
     def test_brief_edit_keeps_apollo_contacts_and_needs_the_combined_token(self):
@@ -164,25 +169,25 @@ class ApolloFindingTests(unittest.TestCase):
         self.enrich(firm_id)
         self.reveal(firm_id, JANE, BOB)
         before = prospects.get_firm(firm_id)
-        person = before["brief"][0]["person"]
-        edit = prospects.BriefEdit(brief_token=before["brief_token"], display_name="Firm Ltd", findings=[
-            prospects.FindingEdit(index=0, title="Jane", text="Jane leads family law.",
-                                  person={**person, "biography": "Edited bio"})])
-        edited = prospects.edit_brief(firm_id, edit)
-        staff = {p["full_name"]: p for p in edited["staff"]}
-        self.assertEqual(sorted(staff), [BOB["name"], JANE["name"]])
-        self.assertEqual((staff[JANE["name"]]["source"], staff[JANE["name"]]["apollo_email"]), ("both", JANE["email"]))
-        self.assertEqual(staff[JANE["name"]]["profile"]["biography"], "Edited bio")
-        self.assertEqual((staff[BOB["name"]]["source"], staff[BOB["name"]]["apollo_email"]), ("apollo", BOB["email"]))
+        records = {kind: before["records"][kind] for kind in ("facts", "practice_areas", "offices")}
+        edited = prospects.edit_brief(firm_id, prospects.BriefEdit(
+            brief_token=before["brief_token"], display_name="Firm Ltd", **records,
+            people=[{**before["records"]["people"][0], "biography": "Edited bio"}]))
+        contacts = {c["full_name"]: c for c in edited["apollo_contacts"]}
+        self.assertEqual(sorted(contacts), [BOB["name"], JANE["name"]])
+        self.assertEqual(contacts[JANE["name"]]["person_id"], edited["records"]["people"][0]["id"])
+        self.assertIsNone(contacts[BOB["name"]]["person_id"])
         self.assertIn("apollo:contact:ap-bob", [f["key"] for f in edited["apollo_findings"]])
         self.assertNotEqual(edited["brief_token"], before["brief_token"])
-        with self.assertRaises(HTTPException) as stale:  # the brief changed since `before`
-            prospects.approve(firm_id, prospects.Approval(brief_token=before["brief_token"], findings=[0]))
+        with self.assertRaises(HTTPException) as stale:  # the records changed since `before`
+            prospects.approve(firm_id, prospects.Approval(brief_token=before["brief_token"],
+                                                          people=[contacts[JANE["name"]]["person_id"]]))
         self.assertEqual(stale.exception.status_code, 409)
-        _, snapshot, _ = self.approve(firm_id, [0], ["apollo:contact:ap-bob"])
+        _, snapshot, _ = self.approve(firm_id, ["apollo:contact:ap-bob"])
         self.assertIn("Edited bio", snapshot)
         self.research(firm_id, PERSON)  # re-research also keeps the Apollo contacts
-        self.assertEqual(sorted(p["full_name"] for p in self.staff(firm_id)), [BOB["name"], JANE["name"]])
+        self.assertEqual(sorted(c["full_name"] for c in prospects.get_firm(firm_id)["apollo_contacts"]),
+                         [BOB["name"], JANE["name"]])
 
     def test_org_without_lists_and_contact_without_email(self):
         found = apollo_findings({"industry": "law practice", "keywords": None}, None,
