@@ -19,6 +19,7 @@ from decks import DeckError, generate_deck
 from firm_research import MAX_PAGES, Person, ResearchError, crawl_site, download_logo, extract_profile
 from pydantic import BaseModel, Field
 from web_research import search_web
+from model_stream import ModelStreamError
 
 router = APIRouter(prefix="/api/v1/firms", tags=["Prospects"])
 DB_PATH = Path(__file__).with_name("prospects.sqlite3")
@@ -84,6 +85,14 @@ def initialize():
             id INTEGER PRIMARY KEY, job_id INTEGER NOT NULL, format TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'queued', error TEXT, content BLOB,
             UNIQUE(job_id,format))""")
+        file_columns = {row["name"] for row in db.execute("PRAGMA table_info(output_files)")}
+        for column, definition in [
+            ("stage", "TEXT NOT NULL DEFAULT 'Queued'"), ("container_id", "TEXT"),
+            ("started_at", "TEXT"), ("updated_at", "TEXT"), ("finished_at", "TEXT"),
+            ("preview", "TEXT NOT NULL DEFAULT ''"),
+        ]:
+            if column not in file_columns:
+                db.execute(f"ALTER TABLE output_files ADD COLUMN {column} {definition}")
         db.execute("""UPDATE output_files SET status='failed',error='Build interrupted; start a new run.'
                       WHERE job_id IN (SELECT id FROM output_jobs WHERE status IN ('queued','running'))
                       AND status!='ready'""")
@@ -135,7 +144,8 @@ def get_firm(firm_id: int):
         for job in outputs:
             job["formats"] = json.loads(job["formats"])
             job["files"] = [dict(p) for p in db.execute(
-                "SELECT id,format,status,error,length(content) AS size FROM output_files WHERE job_id=?",
+                """SELECT id,format,status,error,length(content) AS size,stage,container_id,
+                   started_at,updated_at,finished_at,preview FROM output_files WHERE job_id=?""",
                 (job["id"],))]
     if not row:
         raise HTTPException(404, "Firm not found.")
@@ -476,7 +486,7 @@ def crawl_research(domain: str, model: str, progress):
     pages, warnings = crawl_site(domain, progress)
     progress(stage="Extracting structured firm data")
     with openai.OpenAI(timeout=180, max_retries=0) as client:
-        brief, rejected = extract_profile(client, model, pages)
+        brief, rejected = extract_profile(client, model, pages, progress=progress)
     for finding in brief:
         finding["source_kind"] = "website_crawl"
     if rejected:
@@ -505,12 +515,16 @@ def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
                         for name in enabled}}
     lock = Lock()
 
-    def persist_progress(count=None, stage=None):
+    def persist_progress(count=None, stage=None, source="website", delta=None, characters=None):
         with lock:
             if count is not None:
                 meta["pages_read"] = count
             if stage is not None:
-                meta["sources"]["website"]["stage"] = stage
+                meta["sources"][source]["stage"] = stage
+            if delta:
+                meta["sources"][source]["preview"] = (meta["sources"][source].get("preview", "") + delta)[-12000:]
+            if characters is not None:
+                meta["sources"][source]["characters_received"] = characters
             meta["updated_at"] = datetime.now(timezone.utc).isoformat()
             with database() as db:
                 db.execute("UPDATE firms SET research_meta=? WHERE id=?", (json.dumps(meta), firm_id))
@@ -520,9 +534,11 @@ def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
     with ThreadPoolExecutor(max_workers=3) as executor:
         futures = {executor.submit(crawl_research, domain, model, persist_progress): "website"}
         if options.web_search:
-            futures[executor.submit(search_web, domain, firm["name"], model)] = "web_search"
+            futures[executor.submit(search_web, domain, firm["name"], model,
+                progress=lambda stage, delta: persist_progress(stage=stage, source="web_search", delta=delta))] = "web_search"
         if options.reputation:
-            futures[executor.submit(search_web, domain, firm["name"], model, True)] = "reputation"
+            futures[executor.submit(search_web, domain, firm["name"], model, True,
+                progress=lambda stage, delta: persist_progress(stage=stage, source="reputation", delta=delta))] = "reputation"
         for future in as_completed(futures):
             name = futures[future]
             try:
@@ -530,13 +546,15 @@ def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
                 findings = value[0] if name == "website" else value
                 results[name] = value
                 source_status = {"status": "completed" if findings else "no_results", "findings": len(findings)}
+                if name != "website":
+                    source_status["findings_preview"] = findings
             except Exception as exc:
                 # Each independent provider task reports failure without discarding other sources.
                 logging.error("Research source %s failed for firm %s (%s).", name, firm_id, type(exc).__name__)
                 if isinstance(exc, openai.APITimeoutError):
                     code = "provider_timeout"
                     errors[name] = "OpenAI request timed out. Other source results are preserved; retry the research."
-                elif isinstance(exc, ResearchError):
+                elif isinstance(exc, (ResearchError, ModelStreamError)):
                     code = "research_error"
                     errors[name] = str(exc)
                 else:

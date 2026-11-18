@@ -201,6 +201,10 @@
 .prospects .source-status > div { padding: 16px; border: 1px solid var(--grey-100); border-radius: 12px; font-size: .85rem; }
 .prospects .source-status span { display: block; color: var(--grey-600); }
 .prospects .reputation-note { padding: 12px; background: #fff0d4; border-radius: 8px; font-size: .85rem; }
+.prospects .stream-preview { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font: inherit; background: var(--grey-50); padding: 12px; border-radius: 8px; }
+.prospects .file-progress { flex-basis: 100%; max-width: 100%; }
+.prospects progress { height: 8px; accent-color: var(--blue-600); }
+.prospects .connection-status { font-size: .85rem; color: var(--grey-700); }
 
 @media (max-width: 1000px) {
   .prospects .prospect-grid { grid-template-columns: 300px minmax(0, 1fr); }

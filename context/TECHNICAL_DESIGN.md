@@ -17,8 +17,10 @@ The original design below is retained as a proposal; the current prototype diffe
 - `POST /api/v1/firms/{id}/outputs` accepts an approval, selected `pptx`/`docx`/`pdf`
   formats, optional saved logo, instructions and an idempotent `request_key`.
   Firm detail returns output-job progress and per-file download routes.
-- One explicit container generates the selected files; validated downloads are
-  persisted in SQLite before container deletion. Partial results remain available.
+- Each selected format uses its own explicit container, up to three in parallel.
+  Validated downloads are persisted before container deletion. Source/model
+  streaming events are relayed through SSE snapshots, with per-file stages and
+  timestamps. Partial results remain available.
 - The default model is `gpt-6.1-sol`. A live test generated all three formats;
   62 combined research, output and Apollo tests and the client lint/build passed.
 - Optional Apollo firm/contact enrichment and approval are implemented. Website

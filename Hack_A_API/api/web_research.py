@@ -4,6 +4,7 @@ from urllib.parse import urlsplit
 import openai
 
 from firm_research import ResearchError
+from model_stream import stream_response
 
 
 def cited_search_findings(response, reputation: bool) -> list[dict]:
@@ -52,7 +53,7 @@ def cited_search_findings(response, reputation: bool) -> list[dict]:
     return findings[:12] if reputation else findings[:20]
 
 
-def search_web(domain: str, firm_name: str, model: str, reputation: bool = False) -> list[dict]:
+def search_web(domain: str, firm_name: str, model: str, reputation: bool = False, progress=None) -> list[dict]:
     purpose = (
         "Research public reputation signals and independently published client-experience commentary. "
         "Find attributable source pages, including review-platform listings if accessible. Do not scrape "
@@ -67,7 +68,7 @@ def search_web(domain: str, firm_name: str, model: str, reputation: bool = False
         "Do not infer staff or contact details, software usage, revenue or internal problems."
     )
     with openai.OpenAI(timeout=150, max_retries=0) as client:
-        response = client.responses.create(
+        response = stream_response(client, progress,
             model=model, tools=[{"type": "web_search"}], tool_choice="required",
             max_output_tokens=3500,
             instructions=(

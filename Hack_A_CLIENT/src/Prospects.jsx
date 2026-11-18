@@ -45,7 +45,29 @@ export default function Prospects() {
   const [version, refresh] = useState(0)
   const [query, search] = useState('')
   const [lastPollAt, setLastPollAt] = useState(null)
+  const [liveState, setLiveState] = useState('connecting')
   const reload = useCallback(() => refresh(v => v + 1), [])
+  useEffect(() => {
+    if (!id) return
+    let active = true
+    const stream = new EventSource(`${base}/${id}/events`)
+    stream.onopen = () => { if (active) setLiveState('live') }
+    stream.onmessage = event => {
+      try {
+        const firm = JSON.parse(event.data)
+        if (active && firm.id === id) {
+          setDetail(firm); setLastPollAt(Date.now())
+          setFirms(rows => rows.map(row => row.id === id ? { ...row, name: firm.name, status: firm.status } : row))
+        }
+      } catch {
+        if (active) setError('Live updates could not be read. Periodic polling is still available; refresh to reconnect.')
+        stream.close()
+      }
+    }
+    stream.addEventListener('heartbeat', () => { if (active) setLastPollAt(Date.now()) })
+    stream.onerror = () => { if (active) setLiveState('reconnecting') }
+    return () => { active = false; stream.close() }
+  }, [id])
   useEffect(() => {
     let active = true
     let timer
@@ -105,7 +127,8 @@ export default function Prospects() {
         <strong>{f.name}</strong><span>{f.domain}</span><small data-status={f.status}>{labels[f.status]}</small></button>)}
       {!matches.length && <p>{firms.length ? 'No matching firms.' : 'No firms saved yet.'}</p>}</aside>
     <section className="workspace">{detail && detail.id === id
-      ? <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} lastPollAt={lastPollAt} />
+      ? <><p className="connection-status" role="status">{liveState === 'live' ? 'Live updates connected' : 'Live updates reconnecting · periodic polling available'}</p>
+        <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} lastPollAt={lastPollAt} /></>
       : <><h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></>}</section></div>
   </main>
   </div>
@@ -257,7 +280,13 @@ function ResearchProgress({ meta, active, lastPollAt }) {
       <div key={source}><strong>{sourceLabels[source]}</strong>
         <span>{result.status === 'running' ? result.stage || result.status : result.status}{result.findings != null && ` · ${result.findings} findings`}</span>
         {result.started_at && <small>{duration(result.started_at, result.finished_at)}</small>}
-        {result.error && <p>{result.error}</p>}</div>)}</div>
+        {result.characters_received > 0 && <small> · {result.characters_received.toLocaleString()} response characters received</small>}
+        {result.error && <p>{result.error}</p>}
+        {result.status === 'running' && result.preview && <details open><summary>Live draft — not yet verified</summary><pre className="stream-preview">{result.preview}</pre></details>}
+        {result.findings_preview?.length > 0 && <details><summary>Read sourced results now</summary>
+          {result.findings_preview.map((finding, i) => <div key={i}><p>{finding.text}</p>
+            {finding.sources.map(s => <a href={s.url} key={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div>)}</details>}
+      </div>)}</div>
     {active && <small>Page reading, model extraction and logo retrieval are separate steps. An old progress timestamp does not prove a timeout; provider timeouts are reported explicitly per source.</small>}
   </div>
 }
@@ -274,6 +303,17 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
   const olderApproval = approval && (approval.snapshot.firm !== detail.name ||
     approval.snapshot.findings.some(f => ![...detail.brief, ...(detail.apollo_findings || [])].some(current => JSON.stringify(current) === JSON.stringify(f))))
   const running = detail.outputs.some(job => ['queued', 'running'].includes(job.status))
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!running) return
+    const timer = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(timer)
+  }, [running])
+  function elapsed(file) {
+    if (!file.started_at) return ''
+    const seconds = Math.max(0, Math.floor(((file.finished_at ? Date.parse(file.finished_at) : now) - Date.parse(file.started_at)) / 1000))
+    return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
+  }
   async function generate(event) {
     event.preventDefault()
     const body = { approval_id: Number(selectedId), formats, instructions, logo_id: logo === '' ? null : Number(logo) }
@@ -292,7 +332,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     setNotice('Failed formats selected for a new run. Check the branding and instructions, then generate.')
   }
   return <>
-    <h3>Create a sales pack</h3><p>OpenAI creates files inside its sandbox container. Validated downloads are saved here before the container is deleted.</p>
+    <h3>Create a sales pack</h3><p>Each selected format builds in its own OpenAI container, up to three in parallel. Each download is saved as soon as it is ready.</p>
     {!detail.proposals.length ? <div className="empty-state">No approved brief yet. Review findings in Research, then choose “Approve &amp; create outputs”.</div> :
       <form className="output-form" onSubmit={generate}>
         <label>Approved brief<select value={selectedId} disabled={busy} onChange={e => onApproval(Number(e.target.value))}>
@@ -311,7 +351,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
           <option value="">No firm logo</option>{detail.brand_assets.map(asset => <option key={asset.id} value={asset.id}>Saved firm logo #{asset.id}</option>)}</select></label>
         <label>Sales instructions<textarea maxLength={6000} rows={5} value={instructions} disabled={busy} onChange={e => setInstructions(e.target.value)}
           placeholder="Who is the audience? What should we demonstrate? e.g. Prepare a partner-level discussion focused on family law and a proposed pilot. Do not invent pricing." /></label>
-        <p className="muted">This sends the selected approved brief and optional logo to OpenAI. Each generation uses paid API and container resources. No emails or invitations are sent.</p>
+        <p className="muted">This sends the approved brief and optional logo to one paid container per selected format. Multiple formats use multiple model requests and container charges. No emails or invitations are sent.</p>
         <button disabled={busy || running || !formats.length || !approval}>{running ? 'Container run in progress…' : 'Generate selected outputs'}</button>
       </form>}
     {notice && <p role="status">{notice}</p>}
@@ -322,7 +362,12 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
       {job.instructions && <details><summary>Sales instructions</summary><p>{job.instructions}</p></details>}
       <ul className="file-list">{job.files.map(file => <li key={file.id}><strong>{formatLabels[file.format]}</strong>
         {file.status === 'ready' ? <a href={`${base}/${detail.id}/outputs/${job.id}/files/${file.id}`}>Download .{file.format} · {Math.ceil(file.size / 1024)} KB</a>
-          : <span>{file.error || file.status}</span>}</li>)}</ul>
+          : <span>{file.error || file.stage || file.status}</span>}
+        {file.started_at && <small className="file-progress">{elapsed(file)} elapsed{file.container_id && ` · Container ${file.container_id}`}
+          {file.status === 'running' && file.updated_at && ` · Last activity ${Math.max(0, Math.floor((now - Date.parse(file.updated_at)) / 1000))}s ago`}</small>}
+        {file.status === 'running' && <progress className="file-progress" aria-label={`${formatLabels[file.format]} build in progress`} />}
+        {file.preview && <details className="file-progress"><summary>Model response{file.status === 'running' ? ' · live draft' : ''}</summary><pre className="stream-preview">{file.preview}</pre></details>}
+      </li>)}</ul>
       {['partial', 'failed'].includes(job.status) && <button type="button" disabled={busy || running} onClick={() => retry(job)}>Prepare retry of failed formats</button>}
     </article>)}
     {detail.proposals.some(p => p.status === 'ready') && <details><summary>Earlier PowerPoint downloads</summary>

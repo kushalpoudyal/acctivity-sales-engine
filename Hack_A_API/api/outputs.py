@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 from xml.etree import ElementTree
@@ -15,6 +17,7 @@ from pypdf.errors import PdfReadError
 
 from decks import DeckError, validate_pptx
 from prospects import database, digest
+from model_stream import ModelStreamError, stream_response
 
 router = APIRouter(prefix="/api/v1/firms", tags=["Output studio"])
 FORMATS = {
@@ -67,22 +70,37 @@ def update_stage(job_id: int, stage: str, container_id: str | None = None):
 
 
 def save_file(job_id: int, format: str, data: bytes | None, error: str | None):
+    timestamp = datetime.now(timezone.utc).isoformat()
     with database() as db:
-        db.execute("UPDATE output_files SET status=?,content=?,error=? WHERE job_id=? AND format=?",
-                   ("ready" if data is not None else "failed", data, error, job_id, format))
+        db.execute("""UPDATE output_files SET status=?,content=?,error=?,stage=?,updated_at=?,finished_at=?
+                      WHERE job_id=? AND format=?""",
+                   ("ready" if data is not None else "failed", data, error,
+                    "Download saved" if data is not None else "Failed", timestamp, timestamp, job_id, format))
 
 
-def generate_outputs(job_id: int, job: dict):
+def file_progress(job_id: int, format: str, stage: str, container_id=None, delta=None):
+    timestamp = datetime.now(timezone.utc).isoformat()
+    with database() as db:
+        db.execute("""UPDATE output_files SET status='running',stage=?,container_id=COALESCE(?,container_id),
+                      started_at=COALESCE(started_at,?),updated_at=?,
+                      preview=substr(preview || ?, -4000) WHERE job_id=? AND format=?""",
+                   (stage, container_id, timestamp, timestamp, delta or "", job_id, format))
+
+
+def generate_file(job_id: int, job: dict, format: str):
+    file_progress(job_id, format, "Creating dedicated container")
     with openai.OpenAI(timeout=300, max_retries=0) as client:
-        container = client.containers.create(name=f"acctivity-output-{job_id}")
+        container = client.containers.create(name=f"acctivity-output-{job_id}-{format}")
         try:
-            update_stage(job_id, "Preparing container", container.id)
+            file_progress(job_id, format, "Preparing container", container.id)
             if job["logo"] is not None:
+                file_progress(job_id, format, "Uploading firm logo")
                 extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}[job["logo_mime"]]
                 client.containers.files.create(
                     container.id, file=(f"firm-logo.{extension}", job["logo"], job["logo_mime"]))
-            update_stage(job_id, "Generating selected documents in OpenAI")
-            response = client.responses.create(
+            file_progress(job_id, format, "Requesting document generation")
+            response = stream_response(client,
+                lambda stage, delta: file_progress(job_id, format, stage, delta=delta),
                 model=os.getenv("OPENAI_DECK_MODEL") or os.getenv("OPENAI_MODEL") or "gpt-6.1-sol",
                 tools=[{"type": "code_interpreter", "container": container.id}], tool_choice="required",
                 instructions=(
@@ -96,37 +114,53 @@ def generate_outputs(job_id: int, job: dict):
                     "Label pilot/demo workflows as proposals. Include sources and retain Acctivity.ai "
                     "as the proposal's author. If a firm-logo image was uploaded, use it tastefully "
                     "without suggesting that the firm authored or endorsed this proposal. "
-                    "Create ONLY the requested formats: pptx = editable 5-slide sales proposal at "
+                    "Create ONLY the single requested format: pptx = editable 5-slide sales proposal at "
                     "/mnt/data/proposal.pptx; docx = editable sales proposal at /mnt/data/proposal.docx; "
                     "pdf = concise prospective-demo welcome guide at /mnt/data/welcome.pdf. "
                     "Use appropriate document libraries and verify the resulting files. Link every file."
                 ),
                 input=json.dumps({"approved_brief": json.loads(job["snapshot"]),
-                                  "formats": job["formats"], "sales_instructions": job["instructions"]}),
+                                  "formats": [format], "sales_instructions": job["instructions"]}),
             )
             if response.status != "completed":
                 raise DeckError("OpenAI did not complete the document build.")
-            update_stage(job_id, "Validating and saving downloads")
+            file_progress(job_id, format, "Locating generated document")
             files = list(client.containers.files.list(container.id))
-            for format in job["formats"]:
-                matches = [f for f in files if f.path.rsplit("/", 1)[-1] == FORMATS[format][0]]
-                try:
-                    if len(matches) != 1:
-                        raise DeckError(f"The container did not produce the expected {format.upper()} file.")
-                    if matches[0].bytes is not None and matches[0].bytes > 10_000_000:
-                        raise DeckError("The output exceeds 10 MB.")
-                    data = client.containers.files.content.retrieve(
-                        matches[0].id, container_id=container.id).read()
-                    validate_document(data, format)
-                    save_file(job_id, format, data, None)
-                except (DeckError, openai.OpenAIError) as exc:
-                    error = str(exc) if isinstance(exc, DeckError) else "Could not retrieve this output from OpenAI."
-                    save_file(job_id, format, None, error)
+            matches = [f for f in files if f.path.rsplit("/", 1)[-1] == FORMATS[format][0]]
+            if len(matches) != 1:
+                raise DeckError(f"The container did not produce the expected {format.upper()} file.")
+            if matches[0].bytes is not None and matches[0].bytes > 10_000_000:
+                raise DeckError("The output exceeds 10 MB.")
+            file_progress(job_id, format, "Downloading document")
+            data = client.containers.files.content.retrieve(
+                matches[0].id, container_id=container.id).read()
+            file_progress(job_id, format, "Validating document")
+            validate_document(data, format)
+            save_file(job_id, format, data, None)
         finally:
             try:
                 client.containers.delete(container.id)
             except openai.OpenAIError:
                 logging.warning("Output job %s container cleanup failed; provider expiry applies.", job_id)
+
+
+def generate_outputs(job_id: int, job: dict):
+    update_stage(job_id, f"Building {len(job['formats'])} files in parallel containers")
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(generate_file, job_id, job, format): format for format in job["formats"]}
+        for future in as_completed(futures):
+            format = futures[future]
+            try:
+                future.result()
+            except Exception as exc:
+                logging.error("Output job %s format %s failed (%s).", job_id, format, type(exc).__name__)
+                if isinstance(exc, openai.APITimeoutError):
+                    error = "OpenAI request timed out for this format. Other formats continue."
+                elif isinstance(exc, (DeckError, ModelStreamError)):
+                    error = str(exc)
+                else:
+                    error = "This format failed. Check provider access or prepare a retry."
+                save_file(job_id, format, None, error)
 
 
 def run_outputs(job_id: int):

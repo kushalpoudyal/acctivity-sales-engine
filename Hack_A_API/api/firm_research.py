@@ -13,6 +13,7 @@ from urllib.robotparser import RobotFileParser
 
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, ValidationError
+from model_stream import stream_response
 
 AGENT = "AcctivityResearch"
 MAX_PAGES = 12
@@ -261,9 +262,17 @@ def grounded_findings(profile: FirmProfile, pages: list[dict]) -> tuple[list[dic
     return result, rejected
 
 
-def extract_profile(client, model: str, pages: list[dict]) -> tuple[list[dict], int]:
+def extract_profile(client, model: str, pages: list[dict], progress=None) -> tuple[list[dict], int]:
+    characters = 0
+
+    def report(stage, delta):
+        nonlocal characters
+        characters += len(delta or "")
+        if progress:
+            progress(stage="Extracting structured firm data", characters=characters)
+
     try:
-        response = client.responses.parse(
+        response = stream_response(client, report,
         model=model, text_format=FirmProfile, max_output_tokens=14000,
         instructions=(
             "Extract a comprehensive sales-research profile from the supplied website pages. "

@@ -42,8 +42,9 @@ before connecting a live Acctivity system.
   approval.
 - **Create outputs:** choose an approval, PowerPoint (`pptx`), Word (`docx`),
   welcome PDF (`pdf`), optional saved logo and sales instructions. A single
-  OpenAI container creates the requested formats. Each file is validated and
-  saved independently in SQLite before container deletion.
+  dedicated OpenAI container per format builds the files in parallel (up to
+  three). This incurs one model request and container charge per selected format.
+  Each file is validated and saved independently before its container is deleted.
 
 `POST /api/v1/firms/{id}/outputs` accepts:
 
@@ -67,6 +68,27 @@ formats only. Container jobs survive page refreshes, but this local single-proce
 prototype does not resume interrupted provider work after a server restart;
 already saved downloads remain available.
 
+### Live streaming and document progress
+
+The browser opens `GET /api/v1/firms/{id}/events` as an SSE connection. It receives
+current firm snapshots as persisted progress changes and heartbeat events when
+idle, with periodic polling retained as a fallback. Reconnecting returns the
+latest saved state; leaving the page does not cancel paid work.
+
+OpenAI Responses calls for web search, structured extraction and new output runs
+use the Python SDK's streaming interface. Search requests explicitly enable
+`tools=[{"type":"web_search"}]`. Draft search text is shown before completion and
+is not an approved finding; final cited results become available per source even
+while other source tasks are running.
+
+Each output file tracks its own container ID, stage, timestamps and bounded
+response preview. OpenAI emits stages for code generation and execution, not a
+reliable completion percentage or per-slide live progress. The UI therefore uses
+an indeterminate activity indicator with actual stages and elapsed/last-activity
+times. Raw Python code and intermediate structured JSON are not displayed.
+File downloads appear as each individual file is saved, without waiting for the
+other containers. Older non-streaming runs cannot gain event history retroactively.
+
 The shared model defaults to `gpt-6.1-sol`. A selected logo is copied into the job
 so later research cannot change that run's branding. No live tenant/user creation,
 email sending or invitations occur. Keep this unauthenticated prototype on
@@ -75,7 +97,7 @@ loopback, not a public network.
 ### Focused checks
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_web_research
+.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_web_research test_model_stream
 ```
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
 The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`

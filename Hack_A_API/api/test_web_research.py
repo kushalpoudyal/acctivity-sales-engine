@@ -38,7 +38,7 @@ class ParallelResearchTests(unittest.TestCase):
             return ([{"text": "Firm fact", "sources": [], "source_kind": "website_crawl"}],
                     [{"url": "https://firm.example", "title": "Firm"}], [], [])
 
-        def search(domain, name, model, reputation=False):
+        def search(domain, name, model, reputation=False, progress=None):
             barrier.wait(timeout=3)
             return [{"text": "Search observation", "sources": [],
                      "source_kind": "reputation_search" if reputation else "web_search"}]

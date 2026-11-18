@@ -106,7 +106,6 @@ class FirmResearchTests(unittest.TestCase):
             FirmProfile.model_validate({"findings": [{"category": "unexpected"}]})
         except ValidationError as exc:
             error = exc
-        client = Mock()
-        client.responses.parse.side_effect = error
-        with self.assertLogs(level="ERROR"), self.assertRaisesRegex(ResearchError, "invalid structured firm data"):
-            extract_profile(client, "test-model", [])
+        with patch("firm_research.stream_response", side_effect=error), self.assertLogs(level="ERROR"), \
+                self.assertRaisesRegex(ResearchError, "invalid structured firm data"):
+            extract_profile(Mock(), "test-model", [])
