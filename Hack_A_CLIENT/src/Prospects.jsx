@@ -209,7 +209,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
       <label className="choice"><input type="checkbox" checked={webSearch} disabled={locked} onChange={e => setWebSearch(e.target.checked)} /> OpenAI wider web search</label>
       <label className="choice"><input type="checkbox" checked={reputation} disabled={locked} onChange={e => setReputation(e.target.checked)} /> Public reputation search (not a verified Google review sample)</label></div>
       <button type="button" disabled={locked || dirty} onClick={runResearch}>{detail.status === 'researching' ? 'Researching…' : 'Run website research'}</button></div>
-    {notice && <p role="status">{notice}</p>}
+    {notice && detail.status === 'researching' && <p role="status">{notice}</p>}
     {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.status !== 'researching' && 'Last run: '}{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${detail.brief.length} findings · ${detail.staff.length} staff records`}</p>}
     {detail.research_meta?.sources && <ResearchProgress meta={detail.research_meta} active={detail.status === 'researching'} lastPollAt={lastPollAt} />}
     {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
@@ -263,31 +263,40 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
 }
 
 function ResearchProgress({ meta, active, lastPollAt }) {
+  const running = active && !meta.finished_at
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
+    if (!running) return
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
-  }, [])
+  }, [running])
   function duration(start, end) {
     const seconds = Math.max(0, Math.floor(((end ? Date.parse(end) : now) - Date.parse(start)) / 1000))
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
   }
   return <div>
-    <p className="coverage">{meta.started_at && `Elapsed ${duration(meta.started_at, meta.finished_at)} · `}
+    {running ? <p className="coverage">{meta.started_at && `Elapsed ${duration(meta.started_at)} · `}
       {lastPollAt && `API last responded ${Math.max(0, Math.floor((now - lastPollAt) / 1000))}s ago`}
-      {meta.updated_at && ` · Last progress ${duration(meta.updated_at)} ago`}</p>
-    <div className="source-status" aria-live="polite">{Object.entries(meta.sources).map(([source, result]) =>
+      {meta.updated_at && ` · Last progress ${duration(meta.updated_at)} ago`}</p> :
+      <p className="coverage">{meta.finished_at ? 'Research finished' : 'Research stopped'}
+        {meta.started_at && (meta.finished_at || meta.updated_at) && ` · ${meta.finished_at ? 'Total duration' : 'Last recorded duration'} ${duration(meta.started_at, meta.finished_at || meta.updated_at)}`}
+        {meta.finished_at && <> · Finished <time dateTime={meta.finished_at}>{new Date(meta.finished_at).toLocaleString()}</time></>}</p>}
+    <div className="source-status" aria-live="polite">{Object.entries(meta.sources).map(([source, result]) => {
+      const sourceRunning = running && result.status === 'running'
+      const status = !running && result.status === 'running' ? 'interrupted' : result.status
+      return (
       <div key={source}><strong>{sourceLabels[source]}</strong>
-        <span>{result.status === 'running' ? result.stage || result.status : result.status}{result.findings != null && ` · ${result.findings} findings`}</span>
-        {result.started_at && <small>{duration(result.started_at, result.finished_at)}</small>}
+        <span>{sourceRunning ? result.stage || status : status}{result.findings != null && ` · ${result.findings} findings`}</span>
+        {result.started_at && (sourceRunning || result.finished_at || meta.finished_at || meta.updated_at) &&
+          <small>{sourceRunning ? 'Elapsed' : 'Duration'} {duration(result.started_at, result.finished_at || (!sourceRunning ? meta.finished_at || meta.updated_at : undefined))}</small>}
         {result.characters_received > 0 && <small> · {result.characters_received.toLocaleString()} response characters received</small>}
         {result.error && <p>{result.error}</p>}
-        {result.status === 'running' && result.preview && <details open><summary>Live draft — not yet verified</summary><pre className="stream-preview">{result.preview}</pre></details>}
+        {sourceRunning && result.preview && <details open><summary>Live draft — not yet verified</summary><pre className="stream-preview">{result.preview}</pre></details>}
         {result.findings_preview?.length > 0 && <details><summary>Read sourced results now</summary>
           {result.findings_preview.map((finding, i) => <div key={i}><p>{finding.text}</p>
             {finding.sources.map(s => <a href={s.url} key={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div>)}</details>}
-      </div>)}</div>
-    {active && <small>Page reading, model extraction and logo retrieval are separate steps. An old progress timestamp does not prove a timeout; provider timeouts are reported explicitly per source.</small>}
+      </div>)})}</div>
+    {running && <small>Page reading, model extraction and logo retrieval are separate steps. An old progress timestamp does not prove a timeout; provider timeouts are reported explicitly per source.</small>}
   </div>
 }
 

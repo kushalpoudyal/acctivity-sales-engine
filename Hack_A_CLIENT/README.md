@@ -17,6 +17,10 @@ Saving, editing and approving do not incur provider charges. Container generatio
 does. Run the current API version; an older API now produces an actionable
 version warning rather than a blank workspace.
 
+Completed research shows a fixed total duration and finish time, not live API or
+progress-age counters. Live timers and the started notice appear only while a
+research job is active. Refreshing or reconnecting never starts a paid run.
+
 Open `/sales-studio.html` on the dev server for a separate, clickable sales-engine
 mockup: browse firms, add one with optional Apollo enrichment, then simulate
 research and sandbox output generation. It uses fictional data, makes no API
