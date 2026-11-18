@@ -7,7 +7,15 @@ No backend or environment variables are required.
 
 The separate live `/prospects` directory requires FastAPI on `127.0.0.1:9001`.
 Vite proxies `/api/v1` to that server. Saving or viewing a firm is local;
-only **Run website research** starts a paid OpenAI request.
+research runs and output generation start paid OpenAI requests.
+
+Firm URLs such as `/prospects?firm=1` reopen that firm's workspace. **Research**
+supports editing saved firm/staff details and approving selected findings;
+**Create outputs** selects a frozen approval, PPTX/DOCX/PDF formats, logo and sales
+instructions, then tracks paid OpenAI container jobs and saved downloads.
+Saving, editing and approving do not incur provider charges. Container generation
+does. Run the current API version; an older API now produces an actionable
+version warning rather than a blank workspace.
 
 Open `/sales-studio.html` on the dev server for a separate, clickable sales-engine
 mockup: browse firms, add one with optional Apollo enrichment, then simulate
