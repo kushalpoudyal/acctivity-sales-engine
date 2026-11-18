@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './Prospects.css'
+import FindFirms from './FindFirms'
 
 const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
@@ -83,6 +84,7 @@ export default function Prospects() {
       <p>Research the firm. Review its people. Build a sales pack that feels personal.</p></header>
     <form className="intake" onSubmit={add}><h2>Add a firm</h2><label>Firm website<input name="website" required maxLength={2048} placeholder="firm.com.au" /></label>
       <label>Display name (optional)<input name="display_name" maxLength={160} /></label><button disabled={busy}>Save firm</button></form>
+    <FindFirms onAdded={reload} />
     {error && <div role="alert" className="error-banner">{error} <button onClick={() => { setError(''); reload() }}>Refresh</button></div>}
     <div className="prospect-grid"><aside className="directory"><h2>Firms <span className="badge">{firms.length}</span></h2>
       <label>Filter directory<input value={query} onChange={e => search(e.target.value)} placeholder="Name or website" /></label>
