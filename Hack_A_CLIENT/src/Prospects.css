@@ -74,6 +74,22 @@
 .prospects .prospect-grid { display: grid; grid-template-columns: 360px minmax(0, 1fr); gap: 24px; align-items: start; }
 .prospects .directory { padding: 29px; position: sticky; top: 16px; }
 .prospects .workspace { padding: 33px; }
+
+/* Empty state (no firm selected): 521px tall, centred content, frosted card (Figma 3041:2528) */
+.prospects .workspace:has(> .workspace-empty) {
+  padding: 33px 28px; border-radius: 20px; border-color: var(--grey-0);
+  background: rgb(255 255 255 / .88); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  box-shadow: 0 12px 16px rgb(61 69 61 / .06), 0 1px 1px rgb(61 69 61 / .06);
+}
+/* Same row as the Firms card: stretch to its height (which grows with the list, capped at the viewport). */
+.prospects .prospect-grid:has(.workspace-empty) { align-items: stretch; }
+.prospects .workspace:has(> .workspace-empty) { display: flex; }
+.prospects .directory { max-height: calc(100vh - 32px); overflow-y: auto; }
+.prospects .workspace-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; text-align: center; }
+.prospects .empty-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 28px; background: var(--blue-50); }
+.prospects .empty-icon img { display: block; }
+.prospects .workspace-empty h2 { font-size: 22px; line-height: 1.15; letter-spacing: -.005em; }
+.prospects .workspace-empty p { margin: 0; font-size: 16px; color: var(--grey-700); }
 .prospects .directory h2 { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
 .prospects .directory h2 .badge { padding: 2px 10px; font-size: 13px; }
 .prospects .directory label { margin-bottom: 4px; }

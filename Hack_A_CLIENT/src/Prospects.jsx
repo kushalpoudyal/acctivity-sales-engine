@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './Prospects.css'
 import logo from './assets/logo.png'
+import firmIcon from './assets/icon-firm.svg'
 import FindFirms from './FindFirms'
 
 const base = '/api/v1/firms'
@@ -130,7 +131,8 @@ export default function Prospects() {
     <section className="workspace">{detail && detail.id === id
       ? <><p className="connection-status" role="status">{liveState === 'live' ? 'Live updates connected' : 'Live updates reconnecting · periodic polling available'}</p>
         <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} lastPollAt={lastPollAt} /></>
-      : <><h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></>}</section></div>
+      : <div className="workspace-empty"><span className="empty-icon"><img src={firmIcon} alt="" width="24" height="24" /></span>
+        <h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></div>}</section></div>
   </main>
   </div>
 }
