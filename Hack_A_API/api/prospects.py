@@ -9,13 +9,20 @@ from urllib.parse import urlsplit
 
 import apollo
 import openai
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query, Response
 from decks import DeckError, generate_deck
 from firm_research import ResearchError, crawl_site, download_logo, extract_profile
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/v1/firms", tags=["Prospects"])
 DB_PATH = Path(__file__).with_name("prospects.sqlite3")
+
+
+# source: 'website' (found by research), 'apollo' (revealed in Apollo) or 'both' (merged by name).
+# apollo_email holds the revealed work email apart from the website's public_work_email.
+STAFF_APOLLO_COLUMNS = [("source", "TEXT NOT NULL DEFAULT 'website'"), ("apollo_id", "TEXT"),
+                        ("linkedin_url", "TEXT"), ("email_status", "TEXT"), ("match_confidence", "TEXT"),
+                        ("apollo_email", "TEXT")]
 
 
 @contextmanager
@@ -49,6 +56,10 @@ def initialize():
             position TEXT, public_work_email TEXT, public_work_phone TEXT,
             profile TEXT NOT NULL, source_url TEXT NOT NULL, evidence TEXT NOT NULL,
             UNIQUE(firm_id,full_name))""")
+        staff_columns = {row["name"] for row in db.execute("PRAGMA table_info(staff)")}
+        for column, definition in STAFF_APOLLO_COLUMNS:
+            if column not in staff_columns:
+                db.execute(f"ALTER TABLE staff ADD COLUMN {column} {definition}")
         db.execute("""CREATE TABLE IF NOT EXISTS brand_assets (
             id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL, source_url TEXT NOT NULL,
             mime_type TEXT NOT NULL, content BLOB NOT NULL,
@@ -278,6 +289,59 @@ def cited_passages(response, domain):
     return passages
 
 
+def staff_row(db, firm_id: int, full_name: str, apollo_id: str | None = None):
+    """The firm's staff row for this person: same Apollo id, else same name ignoring case."""
+    if apollo_id:
+        row = db.execute("SELECT * FROM staff WHERE firm_id=? AND apollo_id=?", (firm_id, apollo_id)).fetchone()
+        if row:
+            return row
+    key = full_name.strip().casefold()
+    return next((row for row in db.execute("SELECT * FROM staff WHERE firm_id=?", (firm_id,))
+                 if row["full_name"].strip().casefold() == key), None)
+
+
+def replace_website_staff(db, firm_id: int, brief: list[dict]):
+    """Swap in the website staff from a new brief. Rows with Apollo data survive: merged rows lose
+    their old website fields, then website people merge back in by name (case-insensitive)."""
+    db.execute("DELETE FROM staff WHERE firm_id=? AND source='website' AND apollo_id IS NULL", (firm_id,))
+    db.execute("""UPDATE staff SET source='apollo', public_work_email=NULL, public_work_phone=NULL,
+                  profile='{}', source_url=COALESCE(linkedin_url,''), evidence=''
+                  WHERE firm_id=? AND source='both'""", (firm_id,))
+    for finding in brief:
+        if not (person := finding.get("person")):
+            continue
+        values = (person["position"], person["public_work_email"], person["public_work_phone"],
+                  json.dumps(person), finding["sources"][0]["url"], finding["evidence"])
+        if row := staff_row(db, firm_id, person["full_name"]):
+            db.execute("""UPDATE staff SET position=?, public_work_email=?, public_work_phone=?, profile=?,
+                          source_url=?, evidence=?, source=? WHERE id=?""",
+                       (*values, "both" if row["apollo_id"] else "website", row["id"]))
+        else:
+            db.execute("""INSERT INTO staff(firm_id,full_name,position,public_work_email,public_work_phone,
+                          profile,source_url,evidence,source) VALUES(?,?,?,?,?,?,?,?,'website')""",
+                       (firm_id, person["full_name"], *values))
+
+
+def merge_apollo_person(db, firm_id: int, match: dict):
+    """Store one bulk_match result. A website row with the same name gains the Apollo fields and keeps
+    its biography, practice areas and evidence."""
+    name = (match.get("name") or " ".join(filter(None, [match.get("first_name"), match.get("last_name")]))).strip()
+    if not name or not match.get("id"):
+        return
+    apollo_fields = (match["id"], match.get("linkedin_url"), match.get("email"), match.get("email_status"),
+                     match.get("match_confidence"))
+    if row := staff_row(db, firm_id, name, match["id"]):
+        db.execute("""UPDATE staff SET apollo_id=?, linkedin_url=?, apollo_email=?, email_status=?,
+                      match_confidence=?, position=COALESCE(position,?), source=? WHERE id=?""",
+                   (*apollo_fields, match.get("title"), "apollo" if row["source"] == "apollo" else "both",
+                    row["id"]))
+    else:
+        db.execute("""INSERT INTO staff(firm_id,full_name,position,profile,source_url,evidence,source,
+                      apollo_id,linkedin_url,apollo_email,email_status,match_confidence)
+                      VALUES(?,?,?,'{}',?,'','apollo',?,?,?,?,?)""",
+                   (firm_id, name, match.get("title"), match.get("linkedin_url") or "", *apollo_fields))
+
+
 def research(firm_id: int, domain: str):
     def progress(count):
         with database() as db:
@@ -310,18 +374,7 @@ def research(firm_id: int, domain: str):
         if brief:
             db.execute("UPDATE firms SET brief=?, researched_at=CURRENT_TIMESTAMP WHERE id=?",
                        (json.dumps(brief), firm_id))
-            db.execute("DELETE FROM staff WHERE firm_id=?", (firm_id,))
-            for finding in brief:
-                if person := finding.get("person"):
-                    db.execute("""INSERT INTO staff(firm_id,full_name,position,public_work_email,
-                                  public_work_phone,profile,source_url,evidence) VALUES(?,?,?,?,?,?,?,?)
-                                  ON CONFLICT(firm_id,full_name) DO UPDATE SET
-                                  position=excluded.position, public_work_email=excluded.public_work_email,
-                                  public_work_phone=excluded.public_work_phone, profile=excluded.profile,
-                                  source_url=excluded.source_url, evidence=excluded.evidence""",
-                               (firm_id, person["full_name"], person["position"], person["public_work_email"],
-                                person["public_work_phone"], json.dumps(person),
-                                finding["sources"][0]["url"], finding["evidence"]))
+            replace_website_staff(db, firm_id, brief)
             db.execute("DELETE FROM brand_assets WHERE firm_id=?", (firm_id,))
             for logo in logos:
                 db.execute("INSERT INTO brand_assets(firm_id,source_url,mime_type,content) VALUES(?,?,?,?)",
@@ -344,3 +397,86 @@ def start_research(firm_id: int, tasks: BackgroundTasks, body: dict):
             raise HTTPException(409, "Research is already running.")
     tasks.add_task(research, firm_id, firm["domain"])
     return {"id": firm_id, "status": "researching"}
+
+
+DEFAULT_TITLES = ["Managing Partner", "Partner", "Practice Manager", "General Manager", "Operations Manager",
+                  "Finance Manager", "CFO"]
+# The 18/11 probe found nobody by title at 3 small AU firms, but these seniorities did return people.
+FALLBACK_SENIORITIES = ["owner", "founder", "c_suite", "partner", "head", "director", "manager"]
+
+
+def query_list(values: list[str] | None) -> list[str]:
+    """Repeated or comma-separated query values, trimmed and de-duplicated."""
+    items = (part.strip() for value in values or [] for part in value.split(","))
+    return list(dict.fromkeys(item for item in items if item))
+
+
+@router.get("/{firm_id}/apollo/candidates")
+def apollo_candidates(firm_id: int, titles: list[str] | None = Query(None),
+                      seniorities: list[str] | None = Query(None), fallback: bool = True):
+    """Free Apollo people search at the firm (names obfuscated, no emails). Searches by title
+    (DEFAULT_TITLES when neither titles nor seniorities are given); if a title-only search finds
+    nobody, searches again by FALLBACK_SENIORITIES. `search` says which search produced the results."""
+    firm = get_firm(firm_id)
+    if not firm["apollo_configured"]:
+        raise HTTPException(503, apollo.NOT_CONFIGURED)
+    titles, seniorities = query_list(titles), query_list(seniorities)
+    if not titles and not seniorities:
+        titles = DEFAULT_TITLES
+    search = "titles+seniorities" if titles and seniorities else "titles" if titles else "seniorities"
+    try:
+        result = apollo.search_people(firm["domain"], titles, seniorities=seniorities or None)
+        people = result.get("people") or []
+        fell_back = not people and search == "titles" and fallback
+        if fell_back:
+            search, titles, seniorities = "seniorities", [], FALLBACK_SENIORITIES
+            result = apollo.search_people(firm["domain"], [], seniorities=seniorities)
+            people = result.get("people") or []
+    except apollo.ApolloError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from None
+    stored = {person["apollo_id"]: person for person in firm["staff"] if person["apollo_id"]}
+    return {"search": search, "fallback": fell_back, "titles": titles, "seniorities": seniorities,
+            "total": result.get("total_entries", len(people)), "credits": 0,
+            "candidates": [{"apollo_id": p["id"], "first_name": p.get("first_name"),
+                            "last_name_obfuscated": p.get("last_name_obfuscated"), "title": p.get("title"),
+                            "has_email": p.get("has_email"),
+                            "revealed": bool(stored.get(p["id"], {}).get("apollo_email")),
+                            "staff_id": stored.get(p["id"], {}).get("id")}
+                           for p in people if p.get("id")]}
+
+
+class ApolloReveal(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=50)
+
+
+@router.post("/{firm_id}/apollo/reveal")
+def apollo_reveal(firm_id: int, body: ApolloReveal):
+    """Reveal work emails (Apollo bulk_match, 1 credit per matched person, no phones or personal
+    emails) in batches of apollo.MAX_REVEAL, merged into staff. Refuses, before spending anything,
+    when any id is already stored with an email. Each batch is saved as soon as it returns."""
+    firm = get_firm(firm_id)
+    if not firm["apollo_configured"]:
+        raise HTTPException(503, apollo.NOT_CONFIGURED)
+    ids = list(dict.fromkeys(i.strip() for i in body.ids if i.strip()))
+    if not ids:
+        raise HTTPException(422, "Choose at least one person to reveal.")
+    already = [p["full_name"] for p in firm["staff"] if p["apollo_id"] in ids and p["apollo_email"]]
+    if already:
+        raise HTTPException(409, f"Email already revealed for {', '.join(already)}. "
+                                 "Untick them; revealing again would spend credits twice.")
+    matched = []
+    for start in range(0, len(ids), apollo.MAX_REVEAL):
+        try:
+            batch = apollo.reveal(ids[start:start + apollo.MAX_REVEAL])
+        except apollo.ApolloError as exc:
+            saved = f" {len(matched)} people from earlier batches were saved." if matched else ""
+            raise HTTPException(exc.status_code, str(exc) + saved) from None
+        with database() as db:
+            for match in batch:
+                merge_apollo_person(db, firm_id, match)
+        matched += batch
+    matched_ids = {match.get("id") for match in matched}
+    return {"requested": len(ids), "matched": len(matched),
+            "with_email": sum(1 for match in matched if match.get("email")),
+            "unmatched_ids": [i for i in ids if i not in matched_ids],
+            "staff": get_firm(firm_id)["staff"]}
