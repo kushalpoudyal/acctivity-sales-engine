@@ -5,6 +5,7 @@ import os
 import time
 import zipfile
 from datetime import datetime, timezone
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
 from uuid import UUID
 from xml.etree import ElementTree
@@ -17,7 +18,7 @@ from pypdf.errors import PdfReadError
 
 import sendspark
 from decks import DeckError, validate_pptx
-from documents import RENDERERS, write_copy
+from container_documents import asset_bundle, build_document
 from model_stream import ModelStreamError
 from prospects import SNAPSHOT_VERSION, database, digest
 
@@ -82,38 +83,40 @@ def save_file(job_id: int, format: str, data: bytes | None, error: str | None):
                     "Download saved" if data is not None else "Failed", timestamp, timestamp, job_id, format))
 
 
-def file_progress(job_id: int, format: str, stage: str, delta=None):
+def file_progress(job_id: int, format: str, stage: str, delta=None, container_id=None):
     timestamp = datetime.now(timezone.utc).isoformat()
     with database() as db:
         db.execute("""UPDATE output_files SET status='running',stage=?,started_at=COALESCE(started_at,?),
-                      updated_at=?,preview=substr(preview || ?, -4000) WHERE job_id=? AND format=?""",
-                   (stage, timestamp, timestamp, delta or "", job_id, format))
+                      updated_at=?,preview=substr(preview || ?, -4000),
+                      container_id=COALESCE(?,container_id) WHERE job_id=? AND format=?""",
+                   (stage, timestamp, timestamp, delta or "", container_id, job_id, format))
 
 
 def generate_outputs(job_id: int, job: dict):
-    """OpenAI writes the copy once; our brand templates build each requested file from the approved records."""
-    snapshot = json.loads(job["snapshot"])
-    update_stage(job_id, "Writing proposal copy with OpenAI")
+    """Pre-upload branding and approved records into a dedicated sandbox per format."""
+    bundle = asset_bundle()
+    update_stage(job_id, "Building selected files in parallel OpenAI sandboxes")
 
-    def progress(stage, delta):
-        for format in job["formats"]:
-            file_progress(job_id, format, f"Copy: {stage}", delta)
+    def generate(format):
+        data = build_document({**job, "id": job_id}, format, bundle,
+            lambda stage, container_id=None, delta=None: file_progress(
+                job_id, format, stage, delta=delta, container_id=container_id))
+        file_progress(job_id, format, "Validating generated document")
+        validate_document(data, format)
+        save_file(job_id, format, data, None)
 
-    progress("Requesting proposal copy", None)
-    copy = write_copy(snapshot, job["instructions"], progress)
-    for format in job["formats"]:
-        update_stage(job_id, f"Building {format.upper()} from Acctivity templates")
-        file_progress(job_id, format, "Building from Acctivity template")
-        try:
-            data = RENDERERS[format](snapshot, copy, job["logo"])
-            validate_document(data, format)
-            save_file(job_id, format, data, None)
-        except DeckError as exc:
-            save_file(job_id, format, None, str(exc))
-        except Exception:
-            # One template failing must not lose the other formats.
-            logging.exception("Output job %s could not build %s.", job_id, format)
-            save_file(job_id, format, None, f"Could not build the {format.upper()} file. See the API log.")
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {executor.submit(generate, format): format for format in job["formats"]}
+        for future in as_completed(futures):
+            format = futures[future]
+            try:
+                future.result()
+            except Exception as exc:
+                logging.error("Sandbox output job %s format %s failed (%s).", job_id, format, type(exc).__name__)
+                error = (str(exc) if isinstance(exc, (DeckError, ModelStreamError)) else
+                         "OpenAI sandbox timed out. Prepare a retry." if isinstance(exc, openai.APITimeoutError)
+                         else "Sandbox generation failed. Check provider access or prepare a retry.")
+                save_file(job_id, format, None, error)
 
 
 def save_video(job_id: int, url: str | None, error: str | None):

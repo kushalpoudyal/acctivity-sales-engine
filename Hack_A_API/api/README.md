@@ -55,11 +55,12 @@ connecting a live Acctivity system.
   record ids per table copies them into an immutable snapshot. Later edits do not
   change it. No paid call is made at approval.
 - **Create outputs:** choose an approval, PowerPoint (`pptx`), Word (`docx`),
-  welcome PDF (`pdf`), optional saved logo and sales instructions. One paid OpenAI
-  call writes short copy (titles, summary, proposed opportunities, pilot, next steps,
-  demo agenda) from the approved records; `documents.py` then builds each file from
-  our Acctivity brand templates. Each file is validated and saved in SQLite, and reports its
-  stage and timings; the streamed copy call shows a live draft.
+  welcome PDF (`pdf`), optional saved logo and sales instructions. Each selected
+  document uses its own paid OpenAI request and Code Interpreter sandbox, with
+  up to three in parallel. Before generation, the server uploads `brand-assets.zip`,
+  `approved-firm.json` and the selected firm logo. The archive contains the brand
+  guide, logos, fonts, licensed images and background, not the demo video.
+  OpenAI creates the actual files; the server validates and saves downloads in SQLite.
 
 `POST /api/v1/firms/{id}/outputs` accepts:
 
@@ -96,20 +97,22 @@ use the Python SDK's streaming interface. Search requests explicitly enable
 is not an approved finding; final cited results become available per source even
 while other source tasks are running.
 
-Each output file tracks its own stage, timestamps and a bounded preview of the
-streamed copy call (the structured copy as it arrives). The UI uses an
+Each output file tracks its own stage, container ID, timestamps and bounded
+streamed response preview. Stages include asset uploads, code generation/execution,
+download and validation. The UI uses an
 indeterminate activity indicator with actual stages and elapsed/last-activity
 times. File downloads appear as each file is saved, without waiting for the
 others. Older runs cannot gain event history retroactively.
 
 The shared model defaults to `gpt-6.1-sol`. A selected logo is copied into the job
-so later research cannot change that run's branding; it is used by our templates
-only and never sent to OpenAI. No live tenant/user creation, email sending or
+so later research cannot change that run's branding; it is uploaded to each selected
+document's sandbox along with the approved records. No live tenant/user creation, email sending or
 invitations occur. Keep this unauthenticated prototype on loopback, not a public network.
 
 ### Acctivity brand kit and templates
 
-`brand/BRAND.md` is the brand guide; `documents.py` implements it. The templates use
+`brand/BRAND.md` is the brand guide uploaded to the sandbox. The existing
+`documents.py` local templates remain for the older proposal endpoint. The kit uses
 the Acctivity logo and mark, the palette (Slate Grey `#3D443D` and Steel Blue `#4396BA`,
 with Light Pink, Gold and Light Grey accents), Lora headings and Inter body text, and
 the watercolour background and illustrations from `brand/`.
@@ -149,8 +152,14 @@ until all five `SENDSPARK_*` settings are in `.env`. A video-only run makes no O
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
 The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`
 overrides the shared default, with `OPENAI_RESEARCH_MODEL` and `OPENAI_DECK_MODEL`
-(the copy call) overriding individual operations. API model access depends on the
+(the sandbox call) overriding individual operations. API model access depends on the
 OpenAI account.
+
+Website extraction uses low reasoning effort and concise descriptions, biographies
+and short verbatim evidence quotes to reduce latency. It retains all named people
+and roles found in the selected pages; ten thousand output tokens is a cap, not
+a target. A truncated response still fails validation rather than saving partial
+JSON. Runtime depends on website size and model availability.
 
 ### Parallel research sources
 
@@ -171,6 +180,29 @@ kind's earlier findings, while a failed or disabled search keeps them. Approve t
 (`"web_findings": [ids]`); approved ones go into the snapshot's `web` list, appear in the
 Word proposal under "From the wider web" or "Public reputation (unverified)", and their
 text (never personal contact data) informs the copy call.
+
+### Source selection and Apollo in the same research request
+
+The research endpoint accepts all source flags in one body:
+
+```json
+{"website": true, "web_search": true, "reputation": false, "apollo": true}
+```
+
+Defaults preserve website/web/reputation research; Apollo defaults off. At least
+one source must be selected. Only enabled sources are scheduled, up to four in
+parallel, and `research_meta.selection` records the choice for refresh/reconnect.
+The UI hides disabled-source progress/results and excludes hidden items from
+approval, without deleting their previously saved records.
+
+Apollo performs one organisation enrichment (1 credit) and the existing free
+role/seniority contact search inside the job. Candidate contacts are returned in
+`research_meta.sources.apollo.contact_search`, ready to select without a second
+search click. A repeated paid enrichment requires the rep to confirm the new
+research run. No automatic contact-email or mobile reveal is performed.
+Missing required provider configuration is rejected before the job starts;
+an Apollo-only run does not require an OpenAI key. Other sources retain their
+results if Apollo fails. Re-extraction of saved pages always selects website only.
 Reputation observations are not a verified Google review sample and are unchecked
 for approval by default. They must not be presented as verified reviews, ratings,
 testimonials or established firm facts in output material. No Google Maps scraping
