@@ -21,7 +21,7 @@ from documents import render_pptx, write_copy
 from firm_research import (MAX_PAGES, RECORD_KINDS, FactKind, ResearchError, crawl_site, download_logo,
                            extract_profile)
 from model_stream import ModelStreamError
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from web_research import search_web
 
 router = APIRouter(prefix="/api/v1/firms", tags=["Prospects"])
@@ -612,9 +612,36 @@ def store_research(db, firm_id: int, pages: list[dict], records: dict[str, list[
 
 
 class ResearchOptions(BaseModel):
+    website: bool = True
     web_search: bool = True
     reputation: bool = True
+    apollo: bool = False
     reuse_pages: bool = False
+
+    def selected_sources(self) -> dict[str, bool]:
+        if self.reuse_pages:
+            return {"website": True, "web_search": False, "reputation": False, "apollo": False}
+        return {name: getattr(self, name) for name in ("website", "web_search", "reputation", "apollo")}
+
+    @model_validator(mode="after")
+    def check_sources(self):
+        if self.reuse_pages and not self.website:
+            raise ValueError("Re-extraction requires the website source.")
+        if not any(self.selected_sources().values()):
+            raise ValueError("Select at least one research source.")
+        return self
+
+
+def apollo_research(firm_id: int, domain: str, progress):
+    progress("Enriching firm in Apollo (1 credit)")
+    org = apollo.enrich_org(domain)
+    if org:
+        with database() as db:
+            db.execute("UPDATE firms SET apollo_org=?,apollo_enriched_at=CURRENT_TIMESTAMP WHERE id=?",
+                       (json.dumps(org), firm_id))
+    progress("Finding relevant contacts in Apollo (free)")
+    candidates = apollo_candidates(firm_id, titles=[], seniorities=[], fallback=True)
+    return {"organization_found": bool(org), **candidates}
 
 
 def crawl_research(domain: str, model: str, progress, saved_pages: list[dict] | None = None):
@@ -654,10 +681,11 @@ def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
             saved_pages = [{"id": number, "url": row["url"], "title": row["title"], "text": row["text"]}
                            for number, row in enumerate(db.execute(
                                "SELECT url,title,text FROM pages WHERE firm_id=? ORDER BY id", (firm_id,)), 1)]
-    enabled = ["website"] + (["web_search"] if options.web_search else []) + (
-        ["reputation"] if options.reputation else [])
+    selection = options.selected_sources()
+    enabled = [name for name, selected in selection.items() if selected]
     started_at = datetime.now(timezone.utc).isoformat()
-    meta = {"stage": "Researching sources in parallel", "pages_read": 0, "max_pages": MAX_PAGES,
+    meta = {"stage": "Researching sources in parallel", "selection": selection,
+            "pages_read": 0, "max_pages": MAX_PAGES,
             "started_at": started_at, "updated_at": started_at, "provider_timeout_seconds": 180,
             "sources": {name: {"status": "running", "started_at": started_at,
                                "stage": ("Re-extracting saved pages" if options.reuse_pages else "Starting website crawl")
@@ -681,22 +709,31 @@ def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
 
     persist_progress()
     results, errors = {}, {}
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(crawl_research, domain, model, persist_progress, saved_pages): "website"}
-        if options.web_search:
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = {}
+        if selection["website"]:
+            futures[executor.submit(crawl_research, domain, model, persist_progress, saved_pages)] = "website"
+        if selection["web_search"]:
             futures[executor.submit(search_web, domain, firm["name"], model,
                 progress=lambda stage, delta: persist_progress(stage=stage, source="web_search", delta=delta))] = "web_search"
-        if options.reputation:
+        if selection["reputation"]:
             futures[executor.submit(search_web, domain, firm["name"], model, True,
                 progress=lambda stage, delta: persist_progress(stage=stage, source="reputation", delta=delta))] = "reputation"
+        if selection["apollo"]:
+            futures[executor.submit(apollo_research, firm_id, domain,
+                lambda stage: persist_progress(stage=stage, source="apollo"))] = "apollo"
         for future in as_completed(futures):
             name = futures[future]
             try:
                 value = future.result()
                 results[name] = value
-                found = sum(len(v) for v in value[0].values()) if name == "website" else len(value)
+                found = (sum(len(v) for v in value[0].values()) if name == "website" else
+                         int(value["organization_found"]) + len(value["candidates"]) if name == "apollo"
+                         else len(value))
                 source_status = {"status": "completed" if found else "no_results", "findings": found}
-                if name != "website":
+                if name == "apollo":
+                    source_status["contact_search"] = value
+                elif name != "website":
                     source_status["findings_preview"] = value
             except Exception as exc:
                 # Each independent provider task reports failure without discarding other sources.
@@ -707,6 +744,9 @@ def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
                 elif isinstance(exc, (ResearchError, ModelStreamError)):
                     code = "research_error"
                     errors[name] = str(exc)
+                elif isinstance(exc, (apollo.ApolloError, HTTPException)) and name == "apollo":
+                    code = "apollo_error"
+                    errors[name] = str(exc) if isinstance(exc, apollo.ApolloError) else str(exc.detail)
                 else:
                     code = "source_error"
                     errors[name] = "Research source failed. Check provider access, quota and connectivity."
@@ -719,11 +759,14 @@ def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
     records, pages, logos, warnings = results.get("website", ({}, [], [], []))
     warnings.extend(f"{name}: {error}" for name, error in errors.items())
     website_found = any(records.values())
-    if not website_found:
+    if selection["website"] and not website_found:
         warnings.append("No new website records were extracted; previously saved records and branding were retained.")
     searches = {name: results[name] for name in ("web_search", "reputation") if name in results}
-    found = website_found or any(searches.values())
-    status = "ready" if website_found and not errors else "needs_review" if found else "failed"
+    apollo_result = results.get("apollo", {})
+    found = website_found or any(searches.values()) or bool(
+        apollo_result.get("organization_found") or apollo_result.get("candidates"))
+    source_empty = any(source["status"] == "no_results" for source in meta["sources"].values())
+    status = "ready" if found and not errors and not source_empty else "needs_review" if found else "failed"
     error = ("Some research sources failed. Review source coverage below." if errors and found else
              "No sourced findings returned. Review source coverage or retry." if not found else None)
     timestamp = datetime.now(timezone.utc).isoformat()
@@ -755,13 +798,18 @@ def research(firm_id: int, domain: str, options: ResearchOptions | None = None):
 @router.post("/{firm_id}/research", status_code=202)
 def start_research(firm_id: int, tasks: BackgroundTasks, body: ResearchOptions):
     firm = get_firm(firm_id)
-    if not os.getenv("OPENAI_API_KEY"):
+    selection = body.selected_sources()
+    if any(selection[name] for name in ("website", "web_search", "reputation")) and not os.getenv("OPENAI_API_KEY"):
         raise HTTPException(503, "Research is not configured on the server.")
+    if selection["apollo"] and not apollo.configured():
+        raise HTTPException(503, apollo.NOT_CONFIGURED)
     if body.reuse_pages and not firm["pages_saved"]:
         raise HTTPException(409, "No saved pages to re-extract. Run website research first.")
     with database() as db:
-        if not db.execute("UPDATE firms SET status='researching',error=NULL,research_meta='{}' WHERE id=? AND status!='researching'",
-                          (firm_id,)).rowcount:
+        initial = json.dumps({"selection": selection, "sources": {
+            name: {"status": "queued"} for name, selected in selection.items() if selected}})
+        if not db.execute("UPDATE firms SET status='researching',error=NULL,research_meta=? WHERE id=? AND status!='researching'",
+                          (initial, firm_id)).rowcount:
             raise HTTPException(409, "Research is already running.")
     tasks.add_task(research, firm_id, firm["domain"], body)
     return {"id": firm_id, "status": "researching"}
