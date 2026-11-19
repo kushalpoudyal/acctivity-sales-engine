@@ -18,7 +18,7 @@ The original design below is retained as a proposal; the current prototype diffe
   images are saved, and saved pages can be re-extracted without crawling again.
 - `PUT /api/v1/firms/{id}/brief` saves rep edits with a concurrency token.
   `POST /api/v1/firms/{id}/approvals` freezes the selected records.
-- `POST /api/v1/firms/{id}/outputs` accepts an approval, selected `pptx`/`docx`/`pdf`
+- `POST /api/v1/firms/{id}/outputs` accepts an approval, selected `pptx`/`pdf`/`video`
   formats, optional saved logo, instructions and an idempotent `request_key`.
   Firm detail returns output-job progress and per-file download routes.
 - One paid, streamed OpenAI call writes short copy from the approved records; our
