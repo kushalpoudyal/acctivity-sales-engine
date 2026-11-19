@@ -53,7 +53,6 @@ export default function Prospects() {
   const [dirty, setDirty] = useState(false)
   const [version, refresh] = useState(0)
   const [query, search] = useState('')
-  const [lastPollAt, setLastPollAt] = useState(null)
   const [liveState, setLiveState] = useState('connecting')
   const reload = useCallback(() => refresh(v => v + 1), [])
   useEffect(() => {
@@ -65,7 +64,7 @@ export default function Prospects() {
       try {
         const firm = JSON.parse(event.data)
         if (active && firm.id === id) {
-          setDetail(firm); setLastPollAt(Date.now())
+          setDetail(firm)
           setFirms(rows => rows.map(row => row.id === id ? { ...row, name: firm.name, status: firm.status } : row))
         }
       } catch {
@@ -73,7 +72,6 @@ export default function Prospects() {
         stream.close()
       }
     }
-    stream.addEventListener('heartbeat', () => { if (active) setLastPollAt(Date.now()) })
     stream.onerror = () => { if (active) setLiveState('reconnecting') }
     return () => { active = false; stream.close() }
   }, [id])
@@ -84,7 +82,7 @@ export default function Prospects() {
       try {
         const [rows, selected] = await Promise.all([request(), id ? request('/' + id) : null])
         if (!active) return
-        setFirms(rows); setDetail(selected); setLastPollAt(Date.now())
+        setFirms(rows); setDetail(selected)
         if (rows.some(row => row.status === 'researching') ||
             selected?.proposals.some(p => p.status === 'building') ||
             selected?.outputs?.some(job => ['queued', 'running'].includes(job.status))) {
@@ -146,14 +144,14 @@ export default function Prospects() {
       {!matches.length && <p>{firms.length ? 'No matching firms.' : 'No firms saved yet.'}</p>}</aside>
     <section className="workspace">{detail && detail.id === id
       ? <><p className="connection-status" role="status">{liveState === 'live' ? 'Live updates connected' : 'Live updates reconnecting · periodic polling available'}</p>
-        <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} lastPollAt={lastPollAt} onDelete={() => removeFirm(detail)} /></>
+        <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} onDelete={() => removeFirm(detail)} /></>
       : <div className="workspace-empty"><span className="empty-icon"><img src={firmIcon} alt="" width="24" height="24" /></span>
         <h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></div>}</section></div>
   </main>
   </div>
 }
 
-function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt, onDelete }) {
+function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, onDelete }) {
   const [tab, setTab] = useState('research')
   const [approvalId, setApprovalId] = useState(null)
   // Approval sends the ticked record ids per kind, Apollo finding keys and web finding ids.
@@ -180,7 +178,7 @@ function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt, onDel
       <button id="outputs-tab" role="tab" aria-selected={tab === 'outputs'} aria-controls="outputs-panel" onClick={() => setTab('outputs')}>02 &nbsp; Create outputs</button>
     </div>
     <div id="research-panel" role="tabpanel" aria-labelledby="research-tab" hidden={tab !== 'research'}>
-      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} apollo={apollo} lastPollAt={lastPollAt} />
+      <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} apollo={apollo} />
     </div>
     <div id="outputs-panel" role="tabpanel" aria-labelledby="outputs-tab" hidden={tab !== 'outputs'}>
       <OutputStudio detail={detail} busy={busy} mutate={mutate} approvalId={approvalId} onApproval={setApprovalId} />
@@ -218,7 +216,7 @@ function RecordField({ value, label, type, required, disabled, onChange }) {
   return <label>{label}{type === 'long' ? <textarea rows={3} maxLength={12000} {...props} /> : <input maxLength={320} {...props} />}</label>
 }
 
-function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPollAt }) {
+function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo }) {
   const savedSelection = detail.research_meta?.selection || (detail.research_meta?.sources
     ? Object.fromEntries(['website', 'web_search', 'reputation', 'apollo'].map(name => [name, Boolean(detail.research_meta.sources[name])]))
     : { website: true, web_search: true, reputation: true, apollo: false })
@@ -289,8 +287,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
         {website && detail.pages_saved > 0 && <button type="button" className="secondary" disabled={locked || dirty} onClick={() => runResearch(true)}>Re-extract from {detail.pages_saved} saved pages</button>}
         <button type="button" disabled={locked || dirty || !(website || webSearch || reputation || enrichApollo)} onClick={() => runResearch(false)}>{detail.status === 'researching' ? 'Researching…' : 'Run research'}</button></div></div>
     {notice && detail.status === 'researching' && <p role="status">{notice}</p>}
-    {website && detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.status !== 'researching' && 'Last run: '}{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${total} records · ${detail.records.people.length} people · ${visibleWeb.length} web findings`}</p>}
-    {progressMeta && Object.keys(progressMeta.sources).length > 0 && <ResearchProgress meta={progressMeta} active={detail.status === 'researching'} lastPollAt={lastPollAt} />}
+    {progressMeta && Object.keys(progressMeta.sources).length > 0 && <ResearchProgress meta={progressMeta} active={detail.status === 'researching'} />}
     {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
     {detail.error && <p role="alert">{detail.error}</p>}
     {enrichApollo && apollo}
@@ -340,7 +337,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
   </>
 }
 
-function ResearchProgress({ meta, active, lastPollAt }) {
+function ResearchProgress({ meta, active }) {
   const running = active && !meta.finished_at
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
@@ -353,12 +350,17 @@ function ResearchProgress({ meta, active, lastPollAt }) {
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
   }
   return <div>
-    {running ? <p className="coverage live-timer">{meta.started_at && `Elapsed ${duration(meta.started_at)} · `}
-      {lastPollAt && `API last responded ${Math.max(0, Math.floor((now - lastPollAt) / 1000))}s ago`}
-      {meta.updated_at && ` · Last progress ${duration(meta.updated_at)} ago`}</p> :
-      <p className="coverage">{meta.finished_at ? 'Research finished' : 'Research stopped'}
-        {meta.started_at && (meta.finished_at || meta.updated_at) && ` · ${meta.finished_at ? 'Total duration' : 'Last recorded duration'} ${duration(meta.started_at, meta.finished_at || meta.updated_at)}`}
-        {meta.finished_at && <> · Finished <time dateTime={meta.finished_at}>{new Date(meta.finished_at).toLocaleString()}</time></>}</p>}
+    {/* Run-level summary bars are hidden; while running, one loading indicator shows how many sources have finished. */}
+    {running && (() => {
+      const results = Object.values(meta.sources)
+      const done = results.filter(r => r.status !== 'running').length
+      return <div className="research-loading" role="status">
+        <p><strong>Researching…</strong> {done} of {results.length} {results.length === 1 ? 'source' : 'sources'} finished</p>
+        <progress aria-label="Research in progress" />
+      </div>
+    })()}
+    {!running && !meta.finished_at && <p className="coverage">Research stopped
+      {meta.started_at && meta.updated_at && ` · Last recorded duration ${duration(meta.started_at, meta.updated_at)}`}</p>}
     <div className="source-status" aria-live="polite">{Object.entries(meta.sources).map(([source, result]) => {
       const sourceRunning = running && result.status === 'running'
       const status = !running && result.status === 'running' ? 'interrupted' : result.status
