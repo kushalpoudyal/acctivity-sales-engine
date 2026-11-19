@@ -12,6 +12,8 @@ from outputs import router as outputs_router
 from live_updates import router as live_router
 from demo_plan import router as demo_plan_router
 from demo_logins import router as demo_router
+import demo_seeder
+import demo_reseed
 
 load_dotenv(Path(__file__).with_name(".env"))
 
@@ -20,6 +22,7 @@ DEFAULT_OPENAI_MODEL = "gpt-6.1-sol"
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     initialize()
+    demo_seeder.register_matter_type_provider()
     yield
 
 
@@ -30,6 +33,8 @@ app.include_router(outputs_router)
 app.include_router(live_router)
 app.include_router(demo_plan_router)
 app.include_router(demo_router)
+app.include_router(demo_seeder.router)
+app.include_router(demo_reseed.router)
 
 
 @app.get("/")

@@ -149,6 +149,11 @@ def initialize():
             run_id INTEGER NOT NULL REFERENCES seed_runs(id), step TEXT NOT NULL, item_key TEXT NOT NULL,
             external_id TEXT, status TEXT NOT NULL, error TEXT, updated_at TEXT NOT NULL,
             PRIMARY KEY(run_id,step,item_key))""")
+        # Reseed (demo_reseed.py): kind 'reseed' wipes the demo firm before seeding; wiped_at marks the wipe done.
+        run_columns = {row["name"] for row in db.execute("PRAGMA table_info(seed_runs)")}
+        for column, definition in [("kind", "TEXT NOT NULL DEFAULT 'seed'"), ("wiped_at", "TEXT")]:
+            if column not in run_columns:
+                db.execute(f"ALTER TABLE seed_runs ADD COLUMN {column} {definition}")
         db.execute("""UPDATE seed_runs SET status='failed',error='Seeding interrupted by a server restart. Resume it.'
                       WHERE status IN ('queued','running')""")
         file_columns = {row["name"] for row in db.execute("PRAGMA table_info(output_files)")}

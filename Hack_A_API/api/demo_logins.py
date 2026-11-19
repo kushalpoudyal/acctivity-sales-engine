@@ -132,7 +132,7 @@ def set_rep_token(token: str, source: Literal["tray", "pasted"]) -> dict:
         raise DemoLoginError(f"That rep login has expired: {REFRESH_HINT}.", 422)
     with _lock:
         _rep_login = {"token": token, "source": source, "expires_at": expires_at, "firm_id": str(firm_id),
-                      "environment": _claim(claims, "environment")}
+                      "environment": _claim(claims, "environment"), "user_id": _claim(claims, "userId")}
     return rep_login_status()
 
 
@@ -156,6 +156,13 @@ def _current_rep_login() -> dict:
     if _now() >= login["expires_at"] - EXPIRY_MARGIN:
         raise DemoLoginError(f"The rep login has expired: {REFRESH_HINT}, then send it again.", 401)
     return login
+
+
+def rep_user_id() -> str | None:
+    """The rep's own user id (the token's userId claim), or None. Raises like any rep call when there is no
+    current rep login."""
+    user_id = _current_rep_login().get("user_id")
+    return str(user_id) if user_id else None
 
 
 # ---- guarded firm session ----
