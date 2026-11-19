@@ -6,6 +6,9 @@ import FindFirms from './FindFirms'
 
 // Find firms (Apollo search) is hidden for now; set to true to show it again.
 const SHOW_FIND_FIRMS = false
+// Review Apollo findings is hidden for now. While hidden, approvals include no Apollo findings,
+// so unreviewed Apollo data never reaches outputs. Set to true to show and approve them again.
+const SHOW_APOLLO_REVIEW = false
 
 const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
@@ -208,7 +211,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
   const [logoId, setLogoId] = useState(detail.preferred_logo_id ?? '')
   const [records, setRecords] = useState(detail.records)
   const [selected, setSelected] = useState(() => allIds(detail.records))
-  const [apolloSelected, setApolloSelected] = useState((detail.apollo_findings || []).map(item => item.key))
+  const [apolloSelected, setApolloSelected] = useState(SHOW_APOLLO_REVIEW ? (detail.apollo_findings || []).map(item => item.key) : [])
   const [notice, setNotice] = useState('')
   const dirty = name !== detail.name || String(logoId) !== String(detail.preferred_logo_id ?? '') ||
     JSON.stringify(records) !== JSON.stringify(detail.records)
@@ -302,9 +305,9 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
     {detail.web_findings?.length > 0 && <div className="section-title"><h3>Review web findings</h3>
       <small>Cited from public sources other than the firm's website. Not editable; reputation observations start unticked.</small></div>}
     <WebReview items={detail.web_findings || []} selected={webSelected} setSelected={setWebSelected} />
-    {detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
+    {SHOW_APOLLO_REVIEW && detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
       <small>From Apollo's database, not the firm's website. Not editable; untick anything that looks wrong.</small></div>}
-    <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />
+    {SHOW_APOLLO_REVIEW && <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />}
     <div className="approval-bar"><div><strong>{count} {count === 1 ? 'item' : 'items'} selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
       <button disabled={locked || dirty || !count} onClick={() => approve(selected, apolloSelected, webSelected)}>Approve &amp; create outputs →</button></div>
   </>

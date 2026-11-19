@@ -50,3 +50,4 @@
 - 2026-11-19 · Prospects UI: research record categories (Practice areas, People, Offices, Firm facts) are now collapsible, collapsed by default (Hessam)
 - 2026-11-19 · Prospects UI: Find firms (Apollo search) section hidden behind SHOW_FIND_FIRMS = false in Prospects.jsx (Hessam)
 - 2026-11-19 · Prospects UI: 'Enrich with Apollo (1 credit)' checkbox added to Research sources (unticked by default); Run research then calls apollo/enrich (refresh if already enriched). Re-extract never enriches. Button renamed from "Run website research" to "Run research". (Hessam)
+- 2026-11-19 · Prospects UI: Review Apollo findings section hidden (SHOW_APOLLO_REVIEW = false); while hidden, approvals send no Apollo findings, so outputs carry no Apollo data. (Hessam)
