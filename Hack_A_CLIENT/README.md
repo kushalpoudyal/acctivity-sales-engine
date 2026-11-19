@@ -58,3 +58,10 @@ npm run preview
 
 The production output is generated in `dist`. Google Fonts is optional;
 the page uses system sans-serif fallbacks when it is unavailable.
+
+## Demo environment tab
+
+The "03 Demo environment" tab in `/prospects` (`src/DemoEnvironment.jsx`) appears once a firm has an approved
+snapshot. It needs the API's demo settings (see `Hack_A_API/api/README.md` → Demo seeder / Demo reseed). Set
+`VITE_ACCTIVITY_APP_URL` to the Acctivity (test) web app URL to show the "Open Acctivity (test)" link; it is hidden
+when unset.
