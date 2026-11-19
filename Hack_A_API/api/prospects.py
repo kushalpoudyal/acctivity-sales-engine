@@ -139,6 +139,18 @@ def initialize():
             firm_id INTEGER PRIMARY KEY REFERENCES firms(id), approval_id INTEGER NOT NULL,
             plan TEXT NOT NULL, errors TEXT NOT NULL DEFAULT '[]', edited INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+        # Demo seeder (demo_seeder.py): one row per run of a prospect's plan into the demo firm (the plan is copied
+        # in, so a resumed run writes what it started with), and one row per plan item with the external id it got.
+        db.execute("""CREATE TABLE IF NOT EXISTS seed_runs (
+            id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL REFERENCES firms(id), demo_firm_id TEXT NOT NULL,
+            plan TEXT NOT NULL, totals TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', step TEXT, error TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS seed_run_items (
+            run_id INTEGER NOT NULL REFERENCES seed_runs(id), step TEXT NOT NULL, item_key TEXT NOT NULL,
+            external_id TEXT, status TEXT NOT NULL, error TEXT, updated_at TEXT NOT NULL,
+            PRIMARY KEY(run_id,step,item_key))""")
+        db.execute("""UPDATE seed_runs SET status='failed',error='Seeding interrupted by a server restart. Resume it.'
+                      WHERE status IN ('queued','running')""")
         file_columns = {row["name"] for row in db.execute("PRAGMA table_info(output_files)")}
         for column, definition in [
             ("stage", "TEXT NOT NULL DEFAULT 'Queued'"), ("container_id", "TEXT"),
@@ -253,12 +265,14 @@ def delete_firm(firm_id: int):
         if not firm:
             raise HTTPException(404, "Firm not found.")
         running = db.execute("""SELECT 1 FROM output_jobs WHERE firm_id=? AND status IN ('queued','running')
-                                UNION SELECT 1 FROM proposals WHERE firm_id=? AND status='building'""",
-                             (firm_id, firm_id)).fetchone()
+                                UNION SELECT 1 FROM proposals WHERE firm_id=? AND status='building'
+                                UNION SELECT 1 FROM seed_runs WHERE firm_id=? AND status IN ('queued','running')""",
+                             (firm_id, firm_id, firm_id)).fetchone()
         if firm["status"] == "researching" or running:
-            raise HTTPException(409, "Research or output generation is still running. Delete the firm once it has finished.")
+            raise HTTPException(409, "Research, output generation or a demo seed is still running. Delete the firm once it has finished.")
         db.execute("DELETE FROM person_practice_areas WHERE person_id IN (SELECT id FROM people WHERE firm_id=?)",
                    (firm_id,))
+        db.execute("DELETE FROM seed_run_items WHERE run_id IN (SELECT id FROM seed_runs WHERE firm_id=?)", (firm_id,))
         db.execute("DELETE FROM output_files WHERE job_id IN (SELECT id FROM output_jobs WHERE firm_id=?)", (firm_id,))
         for table in FIRM_TABLES:
             db.execute(f"DELETE FROM {table} WHERE firm_id=?", (firm_id,))
