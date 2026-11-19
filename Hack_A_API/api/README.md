@@ -229,6 +229,37 @@ Invoke-RestMethod http://127.0.0.1:9001/api/v1/demo/firms/<firm id>/check | Conv
 It reads `v1/firm` and `v1/users` with both logins (status, firm name, `isTestFirm`, user count) and
 reports whether writes would pass the guards. It writes nothing.
 
+### Demo seeder
+
+`demo_seeder.py` writes a prospect's saved demo plan into the rep's demo firm (`DEMO_FIRM_ID`, which must
+also be in `DEMO_FIRM_ALLOWLIST`). Plan staff slot N is the Nth user id in `DEMO_STAFF_USER_IDS`
+(comma-separated, slot order). Steps, in order, and the login each uses:
+
+1. Rename the firm, Management `PATCH v1/firm/name` (rep).
+2. Rename the staff, Management `PATCH v1/users/{id}` (rep). Only the configured ids; never the account owner.
+3. Rates, Acctivity `GET v1/users/settings` as each staff member, then `POST` (no row yet) or json-patch
+   `PATCH` with the row version (service).
+4. Matters, Docs Core `POST v1/matters` as the responsible lawyer (service). Docs Core ignores the description
+   on create, so the file number carries it (`<run>-<nn> <description>`).
+5. Client contacts, Docs Core `PUT v1/contacts/{id}` with an id we choose (rep).
+6. Time entries (`POST v1/activities` as the staff member who did the work), fixed fees, disbursements
+   (`v1/cost-recoveries`, GST added for the inc-tax amount) and invoices billing the plan's billed items
+   (service). Up to `DEMO_SEED_CONCURRENCY` (default 4, max 8) requests at a time; there is no batch create.
+7. Each matter is read back and saved (`PUT v1/matters/{id}`, rep) with its description, responsible lawyer and
+   the client contact in the matter type's client slot.
+
+Before any write it checks every guard, that the plan's country is the demo firm's, that each staff id is an
+active, non-owner user read from the firm, and that every matter type is in the firm's tree. Later steps only
+use ids this run created. Nothing retries; the first failure stops the run. Each item's external id is
+stored in `seed_run_items` (per `seed_runs` row), so starting again resumes a failed run and skips what exists.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/api/v1/firms/{id}/demo-seed` | `{"fresh": false}` → 202, starts the background job. Resumes the latest run if it failed; 409 if one is running or the plan is already seeded (use `fresh: true` after a wipe). 404 no plan, 403 guard, 503 settings missing. |
+| GET | `/api/v1/firms/{id}/demo-seed` | latest run: `{id, status queued/running/failed/done, step, error, steps: [{step, label, total, done, failed}], …}` |
+
+The live updates stream (`/api/v1/firms/{id}/events`) carries the same object as `demo_seed`.
+
 ### Focused checks
 
 ```powershell
