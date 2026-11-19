@@ -61,7 +61,7 @@ TEMPLATES = {
             mt("Divorce", ["Dissolution", "Divorce Application"], "person", 2,
                ["Divorce application", "Application to end the marriage"],
                fee("Divorce application (fixed fee)", 1450, 1200)),
-            mt("Consent Orders", ["Consent Order"], "person", 2,
+            mt("Consent Orders", ["Consent Order", "Family General"], "person", 2,
                ["Consent orders for property and parenting"],
                fee("Drafting consent orders (fixed fee)", 2750, 2400)),
             mt("Binding Financial Agreement", ["Financial Agreement", "Contracting Out Agreement"], "person", 1,
@@ -119,7 +119,7 @@ TEMPLATES = {
     "wills_estates": {
         "label": "Wills & estates",
         "keywords": ["will", "estate", "probate", "succession", "attorney", "elder", "trust"],
-        "folders": ["Wills & Estates", "Wills and Estates", "Estates", "Wills"],
+        "folders": ["Wills & Estates", "Wills and Estates", "Estate Planning & Administration", "Estates", "Wills"],
         "matter_types": [
             mt("Will", ["Wills", "Will Preparation"], "person", 3,
                ["Will and powers of attorney", "Updated will after remarriage"],
@@ -130,7 +130,7 @@ TEMPLATES = {
                ["Application for grant of probate", "Probate and collection of assets"]),
             mt("Letters of Administration", ["Administration"], "estate", 1,
                ["Letters of administration, no will"]),
-            mt("Estate Administration", ["Deceased Estate", "Estate"], "estate", 2,
+            mt("Estate Administration", ["Estate Administration General", "Deceased Estate", "Estate"], "estate", 2,
                ["Administration of deceased estate", "Distribution of estate assets"]),
         ],
         "time_entries": [
@@ -160,9 +160,9 @@ TEMPLATES = {
             mt("Commercial Lease", ["Retail Lease", "Lease"], "company", 3,
                ["Review of retail shop lease", "New lease of warehouse premises"],
                fee("Commercial lease review (fixed fee)", 2200, 1950)),
-            mt("Shareholders Agreement", ["Shareholders' Agreement"], "company", 1,
+            mt("Shareholders Agreement", ["Shareholders' Agreement", "Company"], "company", 1,
                ["Shareholders agreement for new venture"], fee("Shareholders agreement (fixed fee)", 3850, 3400)),
-            mt("General Commercial", ["Commercial Advice", "Contract Review", "General"], "company", 2,
+            mt("General Commercial", ["Commercial General", "Commercial Advice", "Contract Review", "Agreement", "General"], "company", 2,
                ["Supply agreement review", "Terms of trade update"]),
         ],
         "time_entries": [
@@ -183,16 +183,16 @@ TEMPLATES = {
     "litigation": {
         "label": "Litigation",
         "keywords": ["litigation", "dispute", "court", "debt", "recovery", "claim"],
-        "folders": ["Litigation", "Disputes", "Dispute Resolution"],
+        "folders": ["Litigation", "Litigation & Disputes", "Disputes", "Dispute Resolution"],
         "matter_types": [
             mt("Debt Recovery", ["Debt Collection"], "company", 3,
                ["Recovery of unpaid invoices", "Debt recovery against former customer"],
                fee("Letter of demand (fixed fee)", 330, 300)),
             mt("Local Court", ["Magistrates Court", "Magistrates' Court"], "person", 1,
                ["Local Court claim for damages"]),
-            mt("District Court", ["County Court"], "company", 2, ["Building defects claim", "Contract dispute"]),
-            mt("Supreme Court", ["High Court"], "company", 1, ["Shareholder dispute proceedings"]),
-            mt("General Litigation", ["Litigation", "Dispute Resolution"], "person", 2,
+            mt("District Court", ["District Court Litigation", "County Court"], "company", 2, ["Building defects claim", "Contract dispute"]),
+            mt("Supreme Court", ["High Court", "High Court Litigation"], "company", 1, ["Shareholder dispute proceedings"]),
+            mt("General Litigation", ["General Dispute", "Litigation", "Dispute Resolution"], "person", 2,
                ["Neighbour boundary dispute", "Insurance claim dispute"]),
         ],
         "time_entries": [
