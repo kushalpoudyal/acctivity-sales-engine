@@ -139,6 +139,11 @@ the plan's allowance). It then polls the prospect (free) every 15 s, for up to 1
 Sendspark reports `completed`, and saves the share link on the run (`url`; there is no file to
 download). Only the firm name and website go to Sendspark. Each video uses Sendspark video minutes.
 
+Video starts concurrently with document generation, not after the last document.
+Each provider saves its own result as soon as ready; a document failure cannot
+block the video. Files stay queued until their worker actually starts; running
+indicators appear only once a start timestamp has been recorded.
+
 The base video and the variables the AI voice speaks are set up once in the Sendspark app; the API
 cannot upload or edit them. Sendspark identifies prospects by email, so each firm gets a
 plus-address on `SENDSPARK_PROSPECT_EMAIL` (e.g. `sales+cbdlaw-com-au@...`). The option is disabled
