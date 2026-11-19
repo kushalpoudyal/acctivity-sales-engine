@@ -10,6 +10,7 @@ from find_firms import router as find_firms_router
 from prospects import initialize, router
 from outputs import router as outputs_router
 from live_updates import router as live_router
+from demo_plan import router as demo_plan_router
 from demo_logins import router as demo_router
 
 load_dotenv(Path(__file__).with_name(".env"))
@@ -27,6 +28,7 @@ app.include_router(router)
 app.include_router(find_firms_router)
 app.include_router(outputs_router)
 app.include_router(live_router)
+app.include_router(demo_plan_router)
 app.include_router(demo_router)
 
 
