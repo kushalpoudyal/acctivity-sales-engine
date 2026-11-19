@@ -292,8 +292,11 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
         <input type="radio" name="logo" checked={String(logoId) === String(asset.id)} disabled={locked} onChange={() => setLogoId(asset.id)} />
         <img className="firm-logo" alt={`Saved firm logo ${asset.id}`} src={`${base}/${detail.id}/brand-assets/${asset.id}`} />
         <a href={`${base}/${detail.id}/brand-assets/${asset.id}`} download>Download logo</a></label>)}</div>
-      {!detail.brand_assets.length && <p>No logo saved. Research will try to collect a published website logo.</p>}
-      <div className="section-title"><h3>Review and edit research records</h3><small>Each record keeps its source page. Your corrections are labelled as rep edits.</small></div>
+      {!detail.brand_assets.length && <p>No logo saved. Research will try to collect a published website logo.</p>}</>}
+      {visibleWeb.length > 0 && <div className="section-title"><h3>Review web findings</h3>
+        <small>Cited from public sources other than the firm's website. Not editable; reputation observations start unticked.</small></div>}
+      <WebReview items={visibleWeb} selected={webSelected} setSelected={setWebSelected} />
+      {website && <><div className="section-title"><h3>Review and edit research records</h3><small>Each record keeps its source page. Your corrections are labelled as rep edits.</small></div>
       {!total && <p>Run research to populate the firm's practice areas, people, offices and facts.</p>}
       {total > 0 && recordKinds.map(([kind, title]) => <details key={kind} className="record-category"><summary><h3 className="category-heading">{title} <span className="badge">{records[kind].length}</span></h3></summary>
         {!records[kind].length && <p className="muted">None found on the website.</p>}
@@ -319,9 +322,6 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
       <div className="review-actions"><button disabled={locked || !dirty}>Save research edits</button>
         <span role="status">{dirty ? 'Unsaved edits — save before approving or re-running research.' : 'All edits saved.'}</span></div>
     </form>
-    {visibleWeb.length > 0 && <div className="section-title"><h3>Review web findings</h3>
-      <small>Cited from public sources other than the firm's website. Not editable; reputation observations start unticked.</small></div>}
-    <WebReview items={visibleWeb} selected={webSelected} setSelected={setWebSelected} />
     {SHOW_APOLLO_REVIEW && enrichApollo && detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
       <small>From Apollo's database, not the firm's website. Not editable; untick anything that looks wrong.</small></div>}
     {SHOW_APOLLO_REVIEW && enrichApollo && <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />}
@@ -373,13 +373,13 @@ function WebReview({ items, selected, setSelected }) {
   return ['web_search', 'reputation_search'].map(kind => {
     const group = items.filter(item => item.kind === kind)
     if (!group.length) return null
-    return <div key={kind}><h3>{sourceLabels[kind]} <small>({group.filter(item => selected.includes(item.id)).length} of {group.length} selected)</small></h3>
+    return <details key={kind} className="record-category"><summary><h3 className="category-heading">{sourceLabels[kind]} <small>({group.filter(item => selected.includes(item.id)).length} of {group.length} selected)</small></h3></summary>
       {kind === 'reputation_search' && <p className="reputation-note">Unverified public reputation signals, not a Google review sample or established firm facts. Review before including in sales material.</p>}
       <ul className="apollo-list">{group.map(item => <li key={item.id}><label className="choice">
         <input type="checkbox" checked={selected.includes(item.id)}
           onChange={e => setSelected(e.target.checked ? [...selected, item.id] : selected.filter(n => n !== item.id))} />
         <span>{item.text}</span></label>
-        <div className="source-links">{item.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div></li>)}</ul></div>
+        <div className="source-links">{item.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div></li>)}</ul></details>
   })
 }
 
