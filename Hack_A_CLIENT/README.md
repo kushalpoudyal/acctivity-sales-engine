@@ -11,9 +11,9 @@ research runs and output generation start paid OpenAI requests.
 
 Firm URLs such as `/prospects?firm=1` reopen that firm's workspace. **Research**
 supports editing saved firm/staff details and approving selected findings;
-**Create outputs** selects a frozen approval, PPTX/DOCX/PDF formats, logo and sales
-instructions, then tracks paid OpenAI container jobs and saved downloads.
-Saving, editing and approving do not incur provider charges. Container generation
+**Create outputs** selects a frozen approval, PPTX/PDF formats or the personalised AI video, logo and sales
+instructions, then tracks the paid copy call, template builds and saved downloads.
+Saving, editing and approving do not incur provider charges. Generating outputs
 does. Run the current API version; an older API now produces an actionable
 version warning rather than a blank workspace.
 
@@ -23,8 +23,8 @@ research job is active. Refreshing or reconnecting never starts a paid run.
 
 Output submission uses `crypto.getRandomValues` for UUID request keys, so it
 works on plain-HTTP internal network addresses as well as localhost/HTTPS.
-The output tab uploads approved data and branding to a separate OpenAI sandbox
-per document; each sandbox/model request is billed separately.
+The output tab sends the approved records to OpenAI once to write the copy; our
+Acctivity templates build every file, so branding is enforced in code.
 
 Research source checkboxes map directly to one research request (`website`,
 `web_search`, `reputation`, `apollo`). Only selected sources run and appear in

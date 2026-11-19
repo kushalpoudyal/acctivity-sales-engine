@@ -59,21 +59,15 @@ class TemplateTests(unittest.TestCase):
         archive = zipfile.ZipFile(io.BytesIO(documents.render_pptx(SNAPSHOT, COPY, None)))
         slides = "".join(archive.read(name).decode() for name in archive.namelist()
                          if re.fullmatch(r"ppt/slides/slide\d+\.xml", name))
-        palette = {documents.SLATE, documents.BLUE, documents.PINK, documents.GOLD, documents.GREY, documents.WHITE}
+        palette = {documents.SLATE, documents.BLUE, documents.PINK, documents.GOLD, documents.GREY, documents.WHITE,
+                   documents.NAVY, documents.INK, documents.PANEL, documents.RULE}
         self.assertLessEqual(set(re.findall(r'<a:latin typeface="([^"]+)"', slides)), {"Lora", "Inter"})
         self.assertLessEqual(set(re.findall(r'<a:srgbClr val="([0-9A-F]{6})"', slides)), palette)
         media = [archive.read(name) for name in archive.namelist() if name.startswith("ppt/media/")]
         self.assertIn(documents.LOGO.read_bytes(), media)
+        # Template rule: illustrations sit on plain pages, never over the watercolour background.
+        self.assertNotIn((documents.BRAND / "background/acctivity-background.jpg").read_bytes(), media)
         self.assertIn("Example Legal at a glance", slides)
-
-    def test_word_document_sets_brand_fonts_and_fallbacks(self):
-        archive = zipfile.ZipFile(io.BytesIO(documents.render_docx(SNAPSHOT, COPY, None)))
-        styles, body = archive.read("word/styles.xml").decode(), archive.read("word/document.xml").decode()
-        self.assertIn('w:ascii="Lora"', styles)
-        self.assertIn('w:ascii="Inter"', styles)
-        self.assertLessEqual(set(re.findall(r'w:ascii="([^"]+)"', body)), {"Lora", "Inter"})
-        self.assertIn('w:name="Lora"><w:family w:val="roman"/>', archive.read("word/fontTable.xml").decode())
-        self.assertIn("Pat Principal", body)
 
     def test_pdf_embeds_brand_fonts(self):
         reader = PdfReader(io.BytesIO(documents.render_pdf(SNAPSHOT, COPY, None)))
@@ -85,14 +79,14 @@ class TemplateTests(unittest.TestCase):
     def test_most_senior_people_come_first(self):
         self.assertEqual([p["full_name"] for p in documents.key_people(SNAPSHOT, 2)], ["Pat Principal", "Sam Solicitor"])
 
-    def test_word_document_adds_approved_apollo_contacts_and_reported_data(self):
-        archive = zipfile.ZipFile(io.BytesIO(documents.render_docx(APOLLO_SNAPSHOT, COPY, None)))
-        body = archive.read("word/document.xml").decode()
-        self.assertIn("pat@firm.example (Apollo)", body)
-        self.assertEqual((body.count("Pat Principal"), body.count("PAT PRINCIPAL")), (1, 0))
-        self.assertIn("Ann Apollo", body)
-        self.assertIn("Reported by Apollo", body)
-        self.assertIn("Xero", body)
+    def test_deck_adds_approved_apollo_contacts_and_reported_data(self):
+        archive = zipfile.ZipFile(io.BytesIO(documents.render_pptx(APOLLO_SNAPSHOT, COPY, None)))
+        slides = "".join(archive.read(name).decode() for name in archive.namelist()
+                         if re.fullmatch(r"ppt/slides/slide\d+\.xml", name))
+        self.assertEqual((slides.count("Pat Principal"), slides.count("PAT PRINCIPAL")), (1, 0))
+        self.assertIn("Ann Apollo", slides)
+        self.assertIn("as reported by Apollo", slides)
+        self.assertIn("Xero", slides)
 
     def test_copy_call_gets_apollo_names_but_no_emails_or_links(self):
         with patch("documents.openai.OpenAI") as factory:

@@ -3,12 +3,9 @@ import json
 import logging
 import os
 import time
-import zipfile
 from datetime import datetime, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Literal
 from uuid import UUID
-from xml.etree import ElementTree
 
 import openai
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Response
@@ -18,25 +15,24 @@ from pypdf.errors import PdfReadError
 
 import sendspark
 from decks import DeckError, validate_pptx
-from container_documents import asset_bundle, build_document
+from documents import RENDERERS, write_copy
 from model_stream import ModelStreamError
 from prospects import SNAPSHOT_VERSION, database, digest
 
 router = APIRouter(prefix="/api/v1/firms", tags=["Output studio"])
 FORMATS = {
     "pptx": ("proposal.pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"),
-    "docx": ("proposal.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
     "pdf": ("welcome.pdf", "application/pdf"),
 }
 # "video" is a Sendspark share link rather than a saved file.
-OutputFormat = Literal["pptx", "docx", "pdf", "video"]
+OutputFormat = Literal["pptx", "pdf", "video"]
 VIDEO_POLL_SECONDS = 15
 VIDEO_TIMEOUT_SECONDS = 900
 
 
 class OutputRequest(BaseModel):
     approval_id: int
-    formats: list[OutputFormat] = Field(min_length=1, max_length=4)
+    formats: list[OutputFormat] = Field(min_length=1, max_length=3)
     instructions: str = Field(default="", max_length=6000)
     logo_id: int | None = None
     request_key: UUID
@@ -47,17 +43,6 @@ def validate_document(data: bytes, format: str):
         raise DeckError("Expected a nonempty document smaller than 10 MB.")
     if format == "pptx":
         validate_pptx(data)
-    elif format == "docx":
-        try:
-            with zipfile.ZipFile(io.BytesIO(data)) as archive:
-                if sum(item.file_size for item in archive.infolist()) > 32_000_000:
-                    raise DeckError("Word document exceeds the prototype size limit.")
-                ElementTree.fromstring(archive.read("[Content_Types].xml"))
-                root = ElementTree.fromstring(archive.read("word/document.xml"))
-                if not "".join(root.itertext()).strip():
-                    raise DeckError("The Word document is empty.")
-        except (zipfile.BadZipFile, KeyError, ElementTree.ParseError) as exc:
-            raise DeckError("The Word document could not be read back.") from exc
     elif format == "pdf":
         try:
             reader = PdfReader(io.BytesIO(data), strict=True)
@@ -83,40 +68,38 @@ def save_file(job_id: int, format: str, data: bytes | None, error: str | None):
                     "Download saved" if data is not None else "Failed", timestamp, timestamp, job_id, format))
 
 
-def file_progress(job_id: int, format: str, stage: str, delta=None, container_id=None):
+def file_progress(job_id: int, format: str, stage: str, delta=None):
     timestamp = datetime.now(timezone.utc).isoformat()
     with database() as db:
         db.execute("""UPDATE output_files SET status='running',stage=?,started_at=COALESCE(started_at,?),
-                      updated_at=?,preview=substr(preview || ?, -4000),
-                      container_id=COALESCE(?,container_id) WHERE job_id=? AND format=?""",
-                   (stage, timestamp, timestamp, delta or "", container_id, job_id, format))
+                      updated_at=?,preview=substr(preview || ?, -4000) WHERE job_id=? AND format=?""",
+                   (stage, timestamp, timestamp, delta or "", job_id, format))
 
 
 def generate_outputs(job_id: int, job: dict):
-    """Pre-upload branding and approved records into a dedicated sandbox per format."""
-    bundle = asset_bundle()
-    update_stage(job_id, "Building selected files in parallel OpenAI sandboxes")
+    """OpenAI writes the copy once; our brand templates build each requested file from the approved records."""
+    snapshot = json.loads(job["snapshot"])
+    update_stage(job_id, "Writing proposal copy with OpenAI")
 
-    def generate(format):
-        data = build_document({**job, "id": job_id}, format, bundle,
-            lambda stage, container_id=None, delta=None: file_progress(
-                job_id, format, stage, delta=delta, container_id=container_id))
-        file_progress(job_id, format, "Validating generated document")
-        validate_document(data, format)
-        save_file(job_id, format, data, None)
+    def progress(stage, delta):
+        for format in job["formats"]:
+            file_progress(job_id, format, f"Copy: {stage}", delta)
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        futures = {executor.submit(generate, format): format for format in job["formats"]}
-        for future in as_completed(futures):
-            format = futures[future]
-            try:
-                future.result()
-            except Exception as exc:
-                logging.error("Sandbox output job %s format %s failed (%s).", job_id, format, type(exc).__name__)
-                error = (str(exc) if isinstance(exc, (DeckError, ModelStreamError)) else
-                         "OpenAI sandbox timed out. Prepare a retry." if isinstance(exc, openai.APITimeoutError)
-                         else "Sandbox generation failed. Check provider access or prepare a retry.")
-                save_file(job_id, format, None, error)
+    progress("Requesting proposal copy", None)
+    copy = write_copy(snapshot, job["instructions"], progress)
+    for format in job["formats"]:
+        update_stage(job_id, f"Building {format.upper()} from Acctivity templates")
+        file_progress(job_id, format, "Building from Acctivity template")
+        try:
+            data = RENDERERS[format](snapshot, copy, job["logo"])
+            validate_document(data, format)
+            save_file(job_id, format, data, None)
+        except DeckError as exc:
+            save_file(job_id, format, None, str(exc))
+        except Exception:
+            # One template failing must not lose the other formats.
+            logging.exception("Output job %s could not build %s.", job_id, format)
+            save_file(job_id, format, None, f"Could not build the {format.upper()} file. See the API log.")
 
 
 def save_video(job_id: int, url: str | None, error: str | None):
@@ -242,9 +225,25 @@ def download_output(firm_id: int, job_id: int, file_id: int):
             JOIN output_jobs j ON j.id=f.job_id
             WHERE f.id=? AND f.job_id=? AND j.firm_id=? AND f.status='ready' AND f.content IS NOT NULL""",
             (file_id, job_id, firm_id)).fetchone()
-    if not row:
+    # Word files from before Word generation was removed are no longer served.
+    if not row or row["format"] not in FORMATS:
         raise HTTPException(404, "No completed file for this firm and run.")
     filename, mime = FORMATS[row["format"]]
     return Response(content=row["content"], media_type=mime,
                     headers={"Content-Disposition": f'attachment; filename="{filename}"',
                              "X-Content-Type-Options": "nosniff"})
+
+
+@router.delete("/{firm_id}/outputs/{job_id}")
+def delete_output(firm_id: int, job_id: int):
+    """Hard delete one output run and its saved files. A Sendspark video stays in Sendspark."""
+    with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        job = db.execute("SELECT status FROM output_jobs WHERE id=? AND firm_id=?", (job_id, firm_id)).fetchone()
+        if not job:
+            raise HTTPException(404, "Output run not found for this firm.")
+        if job["status"] in ("queued", "running"):
+            raise HTTPException(409, "This run is still in progress. Delete it once it has finished.")
+        db.execute("DELETE FROM output_files WHERE job_id=?", (job_id,))
+        db.execute("DELETE FROM output_jobs WHERE id=?", (job_id,))
+    return {"id": job_id, "deleted": True}
