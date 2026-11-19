@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
+from threading import Barrier, Event
 
 import httpx
 from fastapi import BackgroundTasks, HTTPException
@@ -100,6 +101,49 @@ class SendsparkTests(unittest.TestCase):
                 approval_id=self.approval["id"], formats=["video"], request_key=uuid4()), BackgroundTasks())
         self.assertEqual(missing.exception.status_code, 503)
         self.assertFalse(prospects.get_firm(self.firm["id"])["sendspark_configured"])
+
+    def test_video_starts_and_finishes_while_documents_are_still_running(self):
+        barrier, video_ready = Barrier(2), Event()
+        original_video = outputs.generate_video
+
+        def documents(job_id, job):
+            outputs.file_progress(job_id, "pdf", "Generating document")
+            barrier.wait(timeout=3)
+            self.assertTrue(video_ready.wait(timeout=3), "Video waited for documents to finish")
+            run = prospects.get_firm(self.firm["id"])["outputs"][0]
+            files = {f["format"]: f for f in run["files"]}
+            self.assertEqual(files["video"]["status"], "ready")
+            self.assertEqual(files["pdf"]["status"], "running")
+            outputs.save_file(job_id, "pdf", b"fixture", None)
+
+        def video(job_id, job):
+            barrier.wait(timeout=3)
+            original_video(job_id, job)
+            video_ready.set()
+
+        with FakeSendspark(), patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}), \
+                patch("outputs.generate_outputs", side_effect=documents), \
+                patch("outputs.generate_video", side_effect=video):
+            tasks = BackgroundTasks()
+            outputs.create_outputs(self.firm["id"], outputs.OutputRequest(
+                approval_id=self.approval["id"], formats=["pdf", "video"], request_key=uuid4()), tasks)
+            asyncio.run(tasks())
+        run = prospects.get_firm(self.firm["id"])["outputs"][0]
+        self.assertEqual(run["status"], "ready")
+
+    def test_document_failure_does_not_prevent_video_completion(self):
+        with FakeSendspark(), patch.dict(os.environ, {"OPENAI_API_KEY": "test-key"}), \
+                patch("outputs.generate_outputs", side_effect=RuntimeError("test")), \
+                self.assertLogs(level="ERROR"):
+            tasks = BackgroundTasks()
+            outputs.create_outputs(self.firm["id"], outputs.OutputRequest(
+                approval_id=self.approval["id"], formats=["pdf", "video"], request_key=uuid4()), tasks)
+            asyncio.run(tasks())
+        run = prospects.get_firm(self.firm["id"])["outputs"][0]
+        files = {f["format"]: f for f in run["files"]}
+        self.assertEqual(run["status"], "partial")
+        self.assertEqual(files["video"]["status"], "ready")
+        self.assertEqual(files["pdf"]["status"], "failed")
 
 
 if __name__ == "__main__":
