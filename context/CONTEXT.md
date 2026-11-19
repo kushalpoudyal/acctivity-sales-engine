@@ -58,6 +58,7 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
 | GET | `/api/v1/firms/{id}/proposals/{proposal_id}/demo-export` | JSON staging payload of approved records + logo links |
 | POST / GET / PUT | `/api/v1/firms/{id}/demo-plan` | generate (optional **paid** tailoring call) / read / edit + re-validate the firm's demo plan (#18) |
 | POST / GET | `/api/v1/firms/{id}/demo-seed` | seed the demo firm from the plan as a background job (resumes a failed run) / latest run's progress (#19) |
+| GET / POST | `/api/v1/firms/{id}/demo-reseed` | read-only warning (invitees who lose access, counts) / wipe the demo firm and reseed, needs the typed firm name (#20) |
 
 - **Research (`firm_research.py`):** obeys robots.txt; firm's own domain (+www) only; prioritises staff/about/contact/service pages;
   stops at 32 pages / 240k chars / 150 s; no login, JavaScript rendering or PDFs (so Cloudflare-challenged sites such as
@@ -117,6 +118,12 @@ time entries, fees, disbursements, invoices, then each matter's description/resp
 before any write; only ids it created or read; no retries; bounded concurrency (`DEMO_SEED_CONCURRENCY`). Every
 item's external id is kept in `seed_runs` / `seed_run_items`, so a failed run resumes. Progress is in the live
 updates stream (`demo_seed`). It also registers the Docs Core matter-type provider for demo plans. Not run live yet.
+
+**Demo reseed and Demo tab (19/11, branches `demo-reseed` #20, `demo-tab` #21):** `demo_reseed.py` wipes the demo firm
+(invoices, time/fees/disbursements, matters, contacts, previous invitees; never the owner, the 6 staff or the rep) and
+reseeds as one resumable run; the /prospects "03 Demo environment" tab (`DemoEnvironment.jsx`) shows rep-login status,
+plan review/edit, seed / wipe-and-reseed with the typed firm name, live progress with resume and an Acctivity (test)
+link (`VITE_ACCTIVITY_APP_URL`). Browser-checked against a fake Corto; not run live yet.
 
 **Not built yet:** per-prospect images (outputs use the brand illustrations), Acctivity product content for proposals, live Acctivity demo environment, auth.
 

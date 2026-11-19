@@ -43,6 +43,16 @@ STEPS = [
     ("invoices", "Create invoices"),
     ("matter_details", "Add descriptions and clients to matters"),
 ]
+# A reseed (demo_reseed.py) wipes the demo firm first; its run reports these steps before STEPS.
+WIPE_STEPS = [
+    ("wipe_invoices", "Delete invoices"),
+    ("wipe_activities", "Delete time entries"),
+    ("wipe_fees", "Delete fixed fees"),
+    ("wipe_cost_recoveries", "Delete disbursements"),
+    ("wipe_matters", "Delete matters"),
+    ("wipe_contacts", "Delete contacts"),
+    ("wipe_invitees", "Remove previous invitees"),
+]
 GST = {"NZ": 0.15, "AU": 0.10}
 TIMEZONES = {"NZ": "Pacific/Auckland", "AU": "Australia/Sydney"}
 AU_TIMEZONES = {"VIC": "Australia/Melbourne", "QLD": "Australia/Brisbane", "SA": "Australia/Adelaide",
@@ -119,11 +129,11 @@ def register_matter_type_provider() -> None:
 
 # ---------------------------------------------------------------- storage
 
-def _now() -> str:
+def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _totals(plan: dict) -> dict:
+def plan_totals(plan: dict) -> dict:
     matters = len(plan["matters"])
     return {"firm_name": 1, "staff_names": len(plan["staff"]), "rates": len(plan["staff"]), "matters": matters,
             "contacts": matters, "time_entries": len(plan["time_entries"]), "fees": len(plan["fees"]),
@@ -135,12 +145,13 @@ def _summary(db, row) -> dict:
     counts = {(r["step"], r["status"]): r["n"] for r in db.execute(
         "SELECT step,status,count(*) AS n FROM seed_run_items WHERE run_id=? GROUP BY step,status", (row["id"],))}
     totals = json.loads(row["totals"])
-    return {"id": row["id"], "firm_id": row["firm_id"], "status": row["status"], "step": row["step"],
-            "error": row["error"], "created_at": row["created_at"], "updated_at": row["updated_at"],
-            "finished_at": row["finished_at"],
+    steps = WIPE_STEPS + STEPS if row["kind"] == "reseed" else STEPS
+    return {"id": row["id"], "firm_id": row["firm_id"], "kind": row["kind"], "status": row["status"],
+            "step": row["step"], "error": row["error"], "created_at": row["created_at"],
+            "updated_at": row["updated_at"], "finished_at": row["finished_at"], "wiped_at": row["wiped_at"],
             "steps": [{"step": step, "label": label, "total": totals.get(step, 0),
                        "done": counts.get((step, "done"), 0), "failed": counts.get((step, "failed"), 0)}
-                      for step, label in STEPS]}
+                      for step, label in steps]}
 
 
 def latest_run(firm_id: int) -> dict | None:
@@ -150,10 +161,32 @@ def latest_run(firm_id: int) -> dict | None:
         return _summary(db, row) if row else None
 
 
-def _update_run(run_id: int, **fields) -> None:
-    fields["updated_at"] = _now()
+def update_run(run_id: int, **fields) -> None:
+    fields["updated_at"] = now()
     with prospects.database() as db:
         db.execute(f"UPDATE seed_runs SET {','.join(f'{k}=?' for k in fields)} WHERE id=?", (*fields.values(), run_id))
+
+
+def record_item(run_id: int, step: str, key: str, external_id: str | None, status: str,
+                error: str | None = None) -> dict:
+    """Upsert one item's outcome in seed_run_items."""
+    item = {"run_id": run_id, "step": step, "item_key": key, "external_id": external_id, "status": status,
+            "error": error, "updated_at": now()}
+    with prospects.database() as db:
+        db.execute("""INSERT INTO seed_run_items(run_id,step,item_key,external_id,status,error,updated_at)
+                      VALUES(:run_id,:step,:item_key,:external_id,:status,:error,:updated_at)
+                      ON CONFLICT(run_id,step,item_key) DO UPDATE SET external_id=excluded.external_id,
+                      status=excluded.status,error=excluded.error,updated_at=excluded.updated_at""", item)
+    return item
+
+
+def refuse_if_running(firm_id: int, demo_firm: str) -> None:
+    """409 while a seed or reseed runs for this prospect, or for any prospect into the same demo firm."""
+    with prospects.database() as db:
+        running = db.execute("""SELECT 1 FROM seed_runs WHERE status IN ('queued','running')
+                                AND (firm_id=? OR demo_firm_id=?)""", (firm_id, demo_firm)).fetchone()
+    if running:
+        raise HTTPException(409, "A demo seed or reseed is already in progress for this demo firm.")
 
 
 # ---------------------------------------------------------------- the seeder
@@ -182,14 +215,7 @@ class Seeder:
     # -- bookkeeping
 
     def _record(self, step: str, key: str, external_id: str | None, status: str, error: str | None = None):
-        item = {"run_id": self.run_id, "step": step, "item_key": key, "external_id": external_id, "status": status,
-                "error": error, "updated_at": _now()}
-        with prospects.database() as db:
-            db.execute("""INSERT INTO seed_run_items(run_id,step,item_key,external_id,status,error,updated_at)
-                          VALUES(:run_id,:step,:item_key,:external_id,:status,:error,:updated_at)
-                          ON CONFLICT(run_id,step,item_key) DO UPDATE SET external_id=excluded.external_id,
-                          status=excluded.status,error=excluded.error,updated_at=excluded.updated_at""", item)
-        self.items[(step, key)] = item
+        self.items[(step, key)] = record_item(self.run_id, step, key, external_id, status, error)
 
     def _done(self, step: str, key: str) -> bool:
         return self.items.get((step, key), {}).get("status") == "done"
@@ -442,23 +468,30 @@ class Seeder:
     def run(self) -> None:
         self.preflight()
         for step, _ in STEPS:
-            _update_run(self.run_id, step=step)
+            update_run(self.run_id, step=step)
             getattr(self, "matters_step" if step == "matters" else step)()
 
 
 def run_seed(run_id: int) -> None:
-    """The background job: run (or resume) one seed run to the end or the first failure."""
-    _update_run(run_id, status="running", error=None, finished_at=None)
+    """The background job: run (or resume) one seed run to the end or the first failure. A reseed run wipes the
+    demo firm first, unless its wipe already finished (then it never wipes again: that would delete the seed)."""
+    update_run(run_id, status="running", error=None, finished_at=None)
     try:
+        with prospects.database() as db:
+            run = db.execute("SELECT kind,wiped_at FROM seed_runs WHERE id=?", (run_id,)).fetchone()
+        if run["kind"] == "reseed" and not run["wiped_at"]:
+            import demo_reseed  # here, not at the top: demo_reseed imports this module
+            demo_reseed.Wiper(run_id).run()
+            update_run(run_id, wiped_at=now())
         Seeder(run_id).run()
     except (SeedError, DemoLoginError) as error:
-        _update_run(run_id, status="failed", error=str(error), finished_at=_now())
+        update_run(run_id, status="failed", error=str(error), finished_at=now())
         return
     except Exception as error:  # a bug or an unexpected response shape; keep the run resumable
         logger.exception("Demo seed run %s failed", run_id)
-        _update_run(run_id, status="failed", error=f"Unexpected error: {error!r}", finished_at=_now())
+        update_run(run_id, status="failed", error=f"Unexpected error: {error!r}", finished_at=now())
         return
-    _update_run(run_id, status="done", step=None, finished_at=_now())
+    update_run(run_id, status="done", step=None, finished_at=now())
 
 
 # ---------------------------------------------------------------- API
@@ -467,8 +500,8 @@ router = APIRouter(prefix="/api/v1/firms", tags=["Demo seed"])
 
 
 class SeedRequest(BaseModel):
-    # Start a new run even though an earlier one finished or failed (after the wipe, #20). Otherwise a failed
-    # run is resumed and a finished one is not repeated.
+    # Start a new run even though an earlier one finished or failed. Otherwise a failed run (seed or reseed) is
+    # resumed and a finished one is not repeated. To wipe first, use POST .../demo-reseed (demo_reseed.py).
     fresh: bool = False
 
 
@@ -485,24 +518,24 @@ def start_seed(firm_id: int, tasks: BackgroundTasks, body: SeedRequest | None = 
         raise HTTPException(error.status_code, str(error)) from None
     with prospects.database() as db:
         plan = db.execute("SELECT plan FROM demo_plans WHERE firm_id=?", (firm_id,)).fetchone()
-        if not plan:
-            raise HTTPException(404, "No demo plan for this firm yet.")
+    if not plan:
+        raise HTTPException(404, "No demo plan for this firm yet.")
+    refuse_if_running(firm_id, firm)
+    with prospects.database() as db:
         latest = db.execute("SELECT * FROM seed_runs WHERE firm_id=? ORDER BY id DESC LIMIT 1", (firm_id,)).fetchone()
-        if latest and latest["status"] in ("queued", "running"):
-            raise HTTPException(409, "A seed run for this firm is already in progress.")
         if latest and not body.fresh and latest["status"] == "done":
             raise HTTPException(409, "This plan is already seeded. Reseed (wipe first) to seed again.")
-        now = _now()
+        stamp = now()
         if latest and not body.fresh:  # failed: resume it
             if latest["demo_firm_id"] != firm:
                 raise HTTPException(409, "The failed run was for another demo firm; start a fresh run.")
             run_id = latest["id"]
-            db.execute("UPDATE seed_runs SET status='queued',error=NULL,updated_at=? WHERE id=?", (now, run_id))
+            db.execute("UPDATE seed_runs SET status='queued',error=NULL,updated_at=? WHERE id=?", (stamp, run_id))
         else:
             plan_data = json.loads(plan["plan"])
             run_id = db.execute("""INSERT INTO seed_runs(firm_id,demo_firm_id,plan,totals,status,created_at,updated_at)
                                    VALUES(?,?,?,?,'queued',?,?)""",
-                                (firm_id, firm, plan["plan"], json.dumps(_totals(plan_data)), now, now)).lastrowid
+                                (firm_id, firm, plan["plan"], json.dumps(plan_totals(plan_data)), stamp, stamp)).lastrowid
     tasks.add_task(run_seed, run_id)
     return latest_run(firm_id)
 

@@ -256,9 +256,38 @@ stored in `seed_run_items` (per `seed_runs` row), so starting again resumes a fa
 | Method | Path | Purpose |
 |--------|------|---------|
 | POST | `/api/v1/firms/{id}/demo-seed` | `{"fresh": false}` → 202, starts the background job. Resumes the latest run if it failed; 409 if one is running or the plan is already seeded (use `fresh: true` after a wipe). 404 no plan, 403 guard, 503 settings missing. |
-| GET | `/api/v1/firms/{id}/demo-seed` | latest run: `{id, status queued/running/failed/done, step, error, steps: [{step, label, total, done, failed}], …}` |
+| GET | `/api/v1/firms/{id}/demo-seed` | latest run: `{id, kind seed/reseed, status queued/running/failed/done, step, error, wiped_at, steps: [{step, label, total, done, failed}], …}` |
 
 The live updates stream (`/api/v1/firms/{id}/events`) carries the same object as `demo_seed`.
+
+### Demo reseed (issue #20)
+
+`demo_reseed.py` wipes the demo firm and then seeds the prospect's plan, as one seed run with `kind: "reseed"`
+(its `steps` list the wipe steps first). Same guards as the seeder, plus: the rep must type the demo firm's
+current name, and the rep token must carry a user id (so the rep's own user can be protected). Wipe order:
+
+1. Invoices: Acctivity `DELETE v1/invoices/{id}` (service, acting as the rep), found from the billed items.
+   Deleting one releases what it billed.
+2. Time entries, fixed fees, disbursements: listed again (row versions changed), then
+   `POST v1/{activities|fees|cost-recoveries}/batch-delete` in chunks of 100. An item still billed with no
+   invoice to delete is left and reported as failed.
+3. Docs Core matters, then contacts: `PATCH v1/{matters|contacts}/{id}/deleteCode` `{"deleteCode":1}` (rep).
+   Matters go first because a contact that is a party on a live matter can't be deleted (422).
+4. Previous invitees: Management `PATCH v1/users/{id}/deleteCode` for every active user who is not the account
+   owner, a `DEMO_STAFF_USER_IDS` account or the rep, and `DELETE v1/invitations/{id}?userId=` for pending
+   invitations (rep). Protected users are refused even if they come back as invitations.
+
+Everything is deleted, including what attendees created, but only ids read from the firm. `wiped_at` is set when
+the wipe finishes: resuming a reseed that failed mid-wipe lists the firm again (nothing is deleted twice); one
+that failed while seeding resumes the seed and never wipes again.
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/v1/firms/{id}/demo-reseed` | read-only warning: `{demo_firm_id, firm_name, invitees: [{name, email, kind user/invitation, id}], counts: {matters, contacts, activities, fees, cost_recoveries, invoices}}` |
+| POST | `/api/v1/firms/{id}/demo-reseed` | `{"confirm_firm_name": "..."}` → 202, starts wipe + seed. 422 if the name doesn't match (nothing written); resumes this prospect's failed reseed; 409 while any run targets the same demo firm. Progress via `GET .../demo-seed`. |
+
+Not run live yet: the Acctivity list and batch-delete routes, invoice delete, the Docs Core matter/contact lists
+and `GET v1/invitations` haven't been probed on test (see `context/ACCTIVITY.md` for what has).
 
 ### Focused checks
 
