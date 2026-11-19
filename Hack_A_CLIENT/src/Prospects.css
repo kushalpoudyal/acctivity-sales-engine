@@ -125,7 +125,7 @@
 .prospects .approval-bar,
 .prospects .run-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .prospects .workspace-heading small { font-size: 12px; font-weight: 600; letter-spacing: .06em; color: var(--grey-700); }
-.prospects .workspace-heading h2 { font-size: 34px; margin-top: 4px; }
+.prospects .workspace-heading h2 { font-size: 34px; margin-top: 4px; overflow-wrap: anywhere; }
 .prospects .workspace-heading p { margin: 4px 0 0; font-size: 16px; }
 .prospects .workspace-heading .badge { padding: 6px 14px; font-size: 13px; }
 
@@ -257,4 +257,153 @@
   .prospects .intake h2 { width: 100%; }
   .prospects .directory, .prospects .workspace, .prospects .intake { padding: 20px; }
   .prospects-page { background-attachment: scroll; }
+}
+
+/* ───────────────────────── Visual polish layer ─────────────────────────
+   Same Stalktivity tokens (index.css); adds depth, motion and clearer states.
+   Everything below overrides earlier rules and can be removed as one block. */
+
+/* Frosted cards with soft depth instead of flat borders */
+.prospects .intake,
+.prospects .directory,
+.prospects .workspace {
+  border-color: rgb(255 255 255 / .9); border-radius: 20px;
+  background: rgb(255 255 255 / .86); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  box-shadow: 0 1px 2px rgb(61 68 61 / .05), 0 12px 32px -8px rgb(61 68 61 / .12);
+}
+
+/* Header: tighter title with a brand-blue accent rule */
+.prospects .directory-header h1 { letter-spacing: -.02em; }
+.prospects .directory-header p::before { content: ""; display: block; width: 56px; height: 3px; margin: 2px 0 14px; border-radius: 2px; background: linear-gradient(90deg, var(--blue-600), var(--blue-500)); }
+
+/* Buttons: depth, hover lift, press feedback */
+.prospects button { box-shadow: 0 1px 2px rgb(40 90 112 / .18); transition: background .15s, border-color .15s, color .15s, transform .12s, box-shadow .15s; }
+.prospects button:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 14px -4px rgb(40 90 112 / .35); }
+.prospects button:active:not(:disabled) { transform: translateY(0); box-shadow: 0 1px 2px rgb(40 90 112 / .18); }
+.prospects button:disabled { box-shadow: none; }
+.prospects button.secondary { box-shadow: none; }
+.prospects button.secondary:hover:not(:disabled) { box-shadow: 0 4px 10px -4px rgb(61 68 61 / .2); }
+
+/* Firm list: lift on hover, clearer selected row */
+.prospects .firm-row { transition: background .15s, border-color .15s, transform .15s, box-shadow .15s; box-shadow: none; }
+.prospects .firm-row:hover:not(:disabled) { transform: translateX(2px); box-shadow: 0 6px 16px -8px rgb(61 68 61 / .25); }
+.prospects .firm-row[aria-pressed=true] { background: linear-gradient(135deg, var(--blue-50), var(--blue-0)); box-shadow: inset 4px 0 var(--blue-600), 0 6px 16px -8px rgb(40 90 112 / .3); }
+
+/* Workspace heading: status badge as a pill with a dot */
+.prospects .workspace-heading .badge::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: currentColor; vertical-align: 1px; }
+.prospects .workspace-heading .badge[data-status=researching]::before { animation: pulse-dot 1.2s ease-in-out infinite; }
+@keyframes pulse-dot { 50% { opacity: .3; } }
+
+/* Step tabs: segmented control */
+.prospects .workspace-tabs { display: inline-flex; gap: 4px; padding: 5px; border: 0; border-radius: 14px; background: var(--grey-50); margin: 24px 0 28px; }
+.prospects .workspace-tabs button { min-height: 42px; background: transparent; box-shadow: none; color: var(--grey-700); }
+.prospects .workspace-tabs button:hover:not(:disabled) { background: rgb(255 255 255 / .7); transform: none; box-shadow: none; }
+.prospects .workspace-tabs button[aria-selected=true] { background: var(--grey-0); color: var(--blue-700); box-shadow: 0 1px 3px rgb(61 68 61 / .12), 0 4px 10px -4px rgb(61 68 61 / .15); }
+
+/* Research sources: options as selectable tiles */
+.prospects .research-toolbar { align-items: flex-end; background: linear-gradient(160deg, var(--blue-0), var(--grey-0)); border-color: var(--blue-50); border-radius: 16px; }
+.prospects .research-toolbar > div:first-child { flex: 1 1 420px; }
+.prospects .research-toolbar p { margin-bottom: 14px; }
+.prospects .research-toolbar .choice { margin: 6px 0; padding: 8px 14px; min-height: 44px; border: 1px solid var(--grey-100); border-radius: 10px; background: var(--grey-0); cursor: pointer; transition: border-color .15s, background .15s; }
+.prospects .research-toolbar .choice:hover { border-color: var(--blue-500); }
+.prospects .research-toolbar .choice:has(input:checked) { border-color: var(--blue-500); background: var(--blue-50); }
+.prospects .research-toolbar .choice:has(input:disabled) { cursor: default; opacity: .75; }
+
+/* Per-source cards: coloured status dot and accent */
+.prospects .source-status > div { position: relative; padding: 16px 16px 16px 20px; background: var(--grey-0); overflow: hidden; line-height: 1.45; }
+.prospects .source-status > div::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--grey-200); }
+.prospects .source-status strong { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.prospects .source-status strong::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--grey-200); }
+.prospects .source-status > div[data-status=completed]::before,
+.prospects .source-status > div[data-status=completed] strong::before { background: #2f8a6b; }
+.prospects .source-status > div[data-status=running]::before,
+.prospects .source-status > div[data-status=running] strong::before { background: var(--blue-500); }
+.prospects .source-status > div[data-status=running] strong::before { animation: pulse-dot 1.2s ease-in-out infinite; }
+.prospects .source-status > div:is([data-status=failed], [data-status=interrupted])::before,
+.prospects .source-status > div:is([data-status=failed], [data-status=interrupted]) strong::before { background: var(--red-700); }
+.prospects .source-status summary { margin-top: 8px; }
+
+/* Apollo panels */
+.prospects .apollo-panel { border-radius: 16px; background: linear-gradient(160deg, var(--blue-0), var(--grey-0)); }
+.prospects .candidate-list li { padding: 4px 10px; border-radius: 8px; transition: background .15s; }
+.prospects .candidate-list li:hover { background: rgb(255 255 255 / .8); }
+
+/* Section titles: small brand accent before the heading */
+.prospects .section-title h3 { display: flex; align-items: center; gap: 10px; font-family: var(--font-display); font-size: 21px; }
+.prospects .section-title h3::before { content: ""; width: 4px; height: 20px; border-radius: 2px; background: linear-gradient(var(--blue-500), var(--blue-600)); }
+
+/* Collapsible groups: hoverable rows with a round chevron button */
+.prospects .record-category > summary { border-radius: 12px; transition: background .15s; }
+.prospects .record-category > summary:hover { background: var(--blue-0); }
+.prospects .record-category > summary .category-heading { padding: 14px 12px; margin-top: 0; border-top: 0; border-bottom: 1px solid var(--grey-100); }
+.prospects .record-category > summary .category-heading::before {
+  width: 26px; height: 26px; margin: 0; border: 0; border-radius: 50%; transform: none;
+  background: var(--blue-50) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4 2.5 7.5 6 4 9.5' fill='none' stroke='%23367895' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center no-repeat;
+  transition: transform .2s, background-color .15s;
+}
+.prospects .record-category[open] > summary .category-heading::before { transform: rotate(90deg); background-color: var(--blue-500); background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M4 2.5 7.5 6 4 9.5' fill='none' stroke='%23ffffff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+.prospects .record-category[open] > summary .category-heading { border-bottom-color: transparent; }
+.prospects .record-category[open] { padding-bottom: 8px; border-bottom: 1px solid var(--grey-100); }
+.prospects .record-category > summary .category-heading small { font-family: var(--font-body); font-size: 13px; font-weight: 500; }
+
+/* Record and finding cards: hover lift, highlighted when included */
+.prospects .finding-card,
+.prospects .apollo-list li { transition: border-color .15s, box-shadow .15s, transform .15s; }
+.prospects .finding-card:hover,
+.prospects .apollo-list li:hover { border-color: var(--blue-500); box-shadow: 0 8px 20px -10px rgb(40 90 112 / .3); }
+.prospects .finding-card:has(> .choice input:not(:checked)),
+.prospects .apollo-list li:has(> .choice input:not(:checked)) { background: var(--grey-50); opacity: .8; }
+.prospects .apollo-list li { margin-bottom: 10px; }
+
+/* Logo choice tiles */
+.prospects .logo-option { transition: border-color .15s, box-shadow .15s; cursor: pointer; }
+.prospects .logo-option:hover { box-shadow: 0 6px 16px -8px rgb(61 68 61 / .25); }
+
+/* Approval bar: brand-blue call to action that stays in view */
+.prospects .approval-bar {
+  position: sticky; bottom: 16px; z-index: 5; border: 0; border-radius: 16px;
+  background: linear-gradient(120deg, var(--blue-700), var(--blue-600) 60%, var(--blue-500));
+  box-shadow: 0 16px 32px -12px rgb(40 90 112 / .55);
+}
+.prospects .approval-bar strong,
+.prospects .approval-bar p { color: var(--grey-0); }
+.prospects .approval-bar p { opacity: .85; }
+.prospects .approval-bar button { background: var(--grey-0); color: var(--blue-700); }
+.prospects .approval-bar button:hover:not(:disabled) { background: var(--blue-0); }
+.prospects .approval-bar button:disabled { background: rgb(255 255 255 / .35); color: rgb(255 255 255 / .8); }
+
+/* Save row */
+.prospects .review-actions { padding-top: 8px; }
+
+/* Gentle entrance for the workspace content when switching firms */
+.prospects .workspace > * { animation: rise-in .35s ease both; }
+@keyframes rise-in { from { opacity: 0; transform: translateY(6px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .prospects *, .prospects *::before, .prospects *::after { animation: none !important; transition: none !important; }
+  .prospects button:hover:not(:disabled), .prospects .firm-row:hover:not(:disabled) { transform: none; }
+}
+
+/* Add a firm: intro text, inputs that fill the row, globe icon in the website field */
+.prospects .intake { align-items: flex-end; gap: 16px 20px; flex-wrap: nowrap; }
+.prospects .intake .intake-intro { flex: 0 1 300px; align-self: center; margin-right: 12px; }
+.prospects .intake .intake-intro h2 { margin: 0 0 4px; }
+.prospects .intake .intake-intro p { margin: 0; font-size: 15px; line-height: 1.45; }
+.prospects .intake label { flex: 1 1 220px; width: auto; }
+.prospects .intake .intake-website input {
+  padding-left: 42px;
+  background: var(--grey-0) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23847e80' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z'/%3E%3C/svg%3E") 14px center no-repeat;
+}
+.prospects .intake .intake-website input:focus {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%23367895' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='12' cy='12' r='9'/%3E%3Cpath d='M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z'/%3E%3C/svg%3E");
+}
+.prospects .intake button { flex: none; padding: 12px 22px; }
+.prospects .intake-plus { font-size: 20px; line-height: 1; font-weight: 500; margin-top: -2px; }
+@media (max-width: 1100px) {
+  /* The approval bar wraps to two rows here, so it stays in the page flow instead of covering the screen. */
+  .prospects .approval-bar { position: static; }
+}
+@media (max-width: 1000px) {
+  .prospects .intake { flex-wrap: wrap; }
+  .prospects .intake .intake-intro { flex-basis: 100%; margin-right: 0; }
 }

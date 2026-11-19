@@ -133,8 +133,11 @@ export default function Prospects() {
       <a className="app-brand" href="/prospects"><img src={logo} alt="" width="28" height="28" /><span>Stalktivity</span></a>
       <h1>Prospect workspace</h1>
       <p>Research the firm. Review its people. Build a sales pack that feels personal.</p></header>
-    <form className="intake" onSubmit={add}><h2>Add a firm</h2><label>Firm website<input name="website" required maxLength={2048} placeholder="firm.com.au" /></label>
-      <label>Display name (optional)<input name="display_name" maxLength={160} /></label><button disabled={busy}>Save firm</button></form>
+    <form className="intake" onSubmit={add}>
+      <div className="intake-intro"><h2>Add a firm</h2><p>Paste a law firm's website to save it, then run research from its workspace.</p></div>
+      <label className="intake-website">Firm website<input name="website" required maxLength={2048} placeholder="firm.com.au" /></label>
+      <label>Display name (optional)<input name="display_name" maxLength={160} placeholder="e.g. Smith & Co Lawyers" /></label>
+      <button disabled={busy}><span aria-hidden="true" className="intake-plus">+</span>Save firm</button></form>
     {SHOW_FIND_FIRMS && <FindFirms onAdded={reload} />}
     {error && <div role="alert" className="error-banner">{error} <button onClick={() => { setError(''); reload() }}>Refresh</button></div>}
     <div className="prospect-grid"><aside className="directory"><h2>Firms <span className="badge">{firms.length}</span></h2>
@@ -366,7 +369,7 @@ function ResearchProgress({ meta, active }) {
       const sourceRunning = running && result.status === 'running'
       const status = !running && result.status === 'running' ? 'interrupted' : result.status
       return (
-      <div key={source}><strong>{sourceLabels[source]}</strong>
+      <div key={source} data-status={sourceRunning ? 'running' : status}><strong>{sourceLabels[source]}</strong>
         <span>{sourceRunning ? result.stage || status : status}{result.findings != null && ` · ${result.findings} findings`}</span>
         {result.started_at && (sourceRunning || result.finished_at || meta.finished_at || meta.updated_at) &&
           <small className={sourceRunning ? 'live-timer' : undefined}>{sourceRunning ? 'Elapsed' : 'Duration'} {duration(result.started_at, result.finished_at || (!sourceRunning ? meta.finished_at || meta.updated_at : undefined))}</small>}
