@@ -356,7 +356,8 @@ function ResearchProgress({ meta, active }) {
       const done = results.filter(r => r.status !== 'running').length
       return <div className="research-loading" role="status">
         <p><strong>Researching…</strong> {done} of {results.length} {results.length === 1 ? 'source' : 'sources'} finished</p>
-        <progress aria-label="Research in progress" />
+        <div className="loading-track" role="progressbar" aria-label="Research in progress" aria-valuemin={0} aria-valuemax={results.length} aria-valuenow={done}>
+          <div className="loading-fill" style={{ width: `${results.length ? (done / results.length) * 100 : 0}%` }} /></div>
       </div>
     })()}
     {!running && !meta.finished_at && <p className="coverage">Research stopped

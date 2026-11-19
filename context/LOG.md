@@ -69,3 +69,4 @@
 - 2026-11-19 · Prospects UI: Review web findings groups (OpenAI web search, Public reputation search) are collapsible, collapsed by default, same style as research records (Hessam)
 - 2026-11-19 · Prospects UI: hid the after-run summary bars ('Last run: … pages read …' and 'Research finished · Total duration …'), and later also their live versions during a run (pages read / stage, Elapsed · API last responded · Last progress); only the "Research stopped" notice and per-source cards remain (Hessam)
 - 2026-11-19 · Prospects UI: research loading indicator added in place of the hidden summary bars: 'Researching… X of Y sources finished' with an indeterminate progress bar, shown only while a run is active (Hessam)
+- 2026-11-19 · Prospects UI: research loading bar now fills by finished sources (custom bar with a moving highlight) instead of Chrome's barely visible indeterminate <progress> (Hessam)

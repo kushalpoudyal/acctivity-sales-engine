@@ -235,7 +235,12 @@
 .prospects progress { height: 8px; accent-color: var(--blue-600); }
 .prospects .research-loading { margin: 12px 0; padding: 14px 18px; border-radius: 12px; background: var(--blue-50); }
 .prospects .research-loading p { margin: 0 0 8px; color: var(--grey-800); }
-.prospects .research-loading progress { display: block; width: 100%; }
+.prospects .loading-track { position: relative; height: 8px; border-radius: 4px; overflow: hidden; background: var(--grey-0); }
+.prospects .loading-fill { height: 100%; border-radius: 4px; background: var(--blue-600); transition: width .4s ease; }
+/* A moving highlight across the whole track shows work is still happening between finished sources. */
+.prospects .loading-track::after { content: ""; position: absolute; inset: 0; width: 30%; background: linear-gradient(90deg, transparent, rgb(67 150 186 / .35), transparent); animation: loading-sweep 1.4s ease-in-out infinite; }
+@keyframes loading-sweep { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .prospects .loading-track::after { animation: none; display: none; } }
 .prospects .connection-status { font-size: .85rem; color: var(--grey-700); }
 .prospects .live-timer { color: #176450; font-weight: 600; font-variant-numeric: tabular-nums; }
 
