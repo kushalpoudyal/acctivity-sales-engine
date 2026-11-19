@@ -265,12 +265,14 @@ def delete_firm(firm_id: int):
         if not firm:
             raise HTTPException(404, "Firm not found.")
         running = db.execute("""SELECT 1 FROM output_jobs WHERE firm_id=? AND status IN ('queued','running')
-                                UNION SELECT 1 FROM proposals WHERE firm_id=? AND status='building'""",
-                             (firm_id, firm_id)).fetchone()
+                                UNION SELECT 1 FROM proposals WHERE firm_id=? AND status='building'
+                                UNION SELECT 1 FROM seed_runs WHERE firm_id=? AND status IN ('queued','running')""",
+                             (firm_id, firm_id, firm_id)).fetchone()
         if firm["status"] == "researching" or running:
-            raise HTTPException(409, "Research or output generation is still running. Delete the firm once it has finished.")
+            raise HTTPException(409, "Research, output generation or a demo seed is still running. Delete the firm once it has finished.")
         db.execute("DELETE FROM person_practice_areas WHERE person_id IN (SELECT id FROM people WHERE firm_id=?)",
                    (firm_id,))
+        db.execute("DELETE FROM seed_run_items WHERE run_id IN (SELECT id FROM seed_runs WHERE firm_id=?)", (firm_id,))
         db.execute("DELETE FROM output_files WHERE job_id IN (SELECT id FROM output_jobs WHERE firm_id=?)", (firm_id,))
         for table in FIRM_TABLES:
             db.execute(f"DELETE FROM {table} WHERE firm_id=?", (firm_id,))

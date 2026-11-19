@@ -370,6 +370,21 @@ class SeedTests(unittest.TestCase):
         self.assertEqual(status["status"], "done")
         self.assertEqual(len(self.fake.writes("POST", "v1/matters")), 2 * len(self.plan["matters"]))
 
+    def test_deleting_a_seeded_firm_removes_its_plan_and_seed_runs(self):
+        self.seed()
+        prospects.delete_firm(self.firm_id)
+        with prospects.database() as db:
+            for table in ("demo_plans", "seed_runs", "seed_run_items"):
+                self.assertEqual(db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0], 0, table)
+
+    def test_a_firm_cannot_be_deleted_while_its_seed_is_running(self):
+        self.seed()
+        with prospects.database() as db:
+            db.execute("UPDATE seed_runs SET status='running'")
+        with self.assertRaises(prospects.HTTPException) as refused:
+            prospects.delete_firm(self.firm_id)
+        self.assertEqual(refused.exception.status_code, 409)
+
     def test_no_plan_is_a_404(self):
         with prospects.database() as db:
             db.execute("DELETE FROM demo_plans")
