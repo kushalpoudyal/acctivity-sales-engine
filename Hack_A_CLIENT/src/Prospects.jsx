@@ -7,11 +7,14 @@ import { requestKey } from './requestKey'
 
 // Find firms (Apollo search) is hidden for now; set to true to show it again.
 const SHOW_FIND_FIRMS = false
+// Review Apollo findings is hidden for now. While hidden, approvals include no Apollo findings,
+// so unreviewed Apollo data never reaches outputs. Set to true to show and approve them again.
+const SHOW_APOLLO_REVIEW = false
 
 const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
-const formatLabels = { pptx: 'PowerPoint proposal', docx: 'Word proposal', pdf: 'Welcome PDF', video: 'Personalised AI video' }
-const formatHints = { pptx: '.pptx · Editable sales material', docx: '.docx · Editable sales material', pdf: '.pdf · Prospective demo welcome guide', video: 'Sendspark · the AI voice says the firm name' }
+const formatLabels = { pptx: 'PowerPoint proposal', pdf: 'Welcome PDF', video: 'Personalised AI video' }
+const formatHints = { pptx: '.pptx · Editable sales material', pdf: '.pdf · Prospective demo welcome guide', video: 'Sendspark · the AI voice says the firm name' }
 const sourceLabels = { website: 'Website crawl', website_crawl: 'Website crawl', web_search: 'OpenAI web search', reputation: 'Public reputation search', reputation_search: 'Public reputation search', apollo: 'Apollo enrichment and contacts' }
 
 async function request(path = '', options) {
@@ -116,6 +119,15 @@ export default function Prospects() {
       window.history.replaceState(null, '', `/prospects?firm=${result.id}`)
     }
   }
+  async function removeFirm(firm) {
+    if (!window.confirm(`Permanently delete ${firm.name} and all of its research, approvals and outputs? This cannot be undone.`)) return
+    setBusy(true); setError('')
+    try {
+      await request(`/${firm.id}`, { method: 'DELETE' })
+      setDirty(false); setDetail(null); select(null); reload()
+      window.history.replaceState(null, '', '/prospects')
+    } catch (e) { setError(e.message) } finally { setBusy(false) }
+  }
   const matches = firms.filter(f => (f.name + ' ' + f.domain).toLowerCase().includes(query.toLowerCase()))
   return <div className="prospects-page">
   <main className="prospects">
@@ -134,14 +146,14 @@ export default function Prospects() {
       {!matches.length && <p>{firms.length ? 'No matching firms.' : 'No firms saved yet.'}</p>}</aside>
     <section className="workspace">{detail && detail.id === id
       ? <><p className="connection-status" role="status">{liveState === 'live' ? 'Live updates connected' : 'Live updates reconnecting · periodic polling available'}</p>
-        <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} lastPollAt={lastPollAt} /></>
+        <FirmWorkspace key={id} detail={detail} busy={busy} dirty={dirty} mutate={mutate} onDirty={setDirty} lastPollAt={lastPollAt} onDelete={() => removeFirm(detail)} /></>
       : <div className="workspace-empty"><span className="empty-icon"><img src={firmIcon} alt="" width="24" height="24" /></span>
         <h2>Firm workspace</h2><p>{id ? 'Loading firm…' : 'Select a firm or save a website to get started.'}</p></div>}</section></div>
   </main>
   </div>
 }
 
-function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt }) {
+function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt, onDelete }) {
   const [tab, setTab] = useState('research')
   const [approvalId, setApprovalId] = useState(null)
   // Approval sends the ticked record ids per kind, Apollo finding keys and web finding ids.
@@ -161,7 +173,8 @@ function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt }) {
   </>
   return <>
     <div className="workspace-heading"><div><small>FIRM WORKSPACE</small><h2>{detail.name}</h2><p>{detail.domain}</p></div>
-      <span className="badge" data-status={detail.status}>{labels[detail.status]}</span></div>
+      <span className="badge" data-status={detail.status}>{labels[detail.status]}</span>
+      <button type="button" className="secondary" disabled={busy || detail.status === 'researching'} onClick={onDelete}>Delete firm</button></div>
     <div className="workspace-tabs" role="tablist" aria-label="Firm workspace">
       <button id="research-tab" role="tab" aria-selected={tab === 'research'} aria-controls="research-panel" onClick={() => setTab('research')}>01 &nbsp; Research</button>
       <button id="outputs-tab" role="tab" aria-selected={tab === 'outputs'} aria-controls="outputs-panel" onClick={() => setTab('outputs')}>02 &nbsp; Create outputs</button>
@@ -213,7 +226,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
   const [logoId, setLogoId] = useState(detail.preferred_logo_id ?? '')
   const [records, setRecords] = useState(detail.records)
   const [selected, setSelected] = useState(() => allIds(detail.records))
-  const [apolloSelected, setApolloSelected] = useState((detail.apollo_findings || []).map(item => item.key))
+  const [apolloSelected, setApolloSelected] = useState(SHOW_APOLLO_REVIEW ? (detail.apollo_findings || []).map(item => item.key) : [])
   const [notice, setNotice] = useState('')
   const dirty = name !== detail.name || String(logoId) !== String(detail.preferred_logo_id ?? '') ||
     JSON.stringify(records) !== JSON.stringify(detail.records)
@@ -229,7 +242,7 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
   const visibleWeb = (detail.web_findings || []).filter(f => f.kind === 'web_search' ? webSearch : reputation)
   const visibleWebIds = webSelected.filter(id => visibleWeb.some(f => f.id === id))
   const visibleSelection = website ? selected : Object.fromEntries(recordKinds.map(([kind]) => [kind, []]))
-  const visibleApolloKeys = enrichApollo ? apolloSelected : []
+  const visibleApolloKeys = SHOW_APOLLO_REVIEW && enrichApollo ? apolloSelected : []
   const count = countRecords(visibleSelection) + visibleApolloKeys.length + visibleWebIds.length
   const sourceSelection = { website, web_search: webSearch, reputation, apollo: enrichApollo }
   const progressMeta = detail.research_meta?.sources ? {
@@ -289,8 +302,11 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
         <input type="radio" name="logo" checked={String(logoId) === String(asset.id)} disabled={locked} onChange={() => setLogoId(asset.id)} />
         <img className="firm-logo" alt={`Saved firm logo ${asset.id}`} src={`${base}/${detail.id}/brand-assets/${asset.id}`} />
         <a href={`${base}/${detail.id}/brand-assets/${asset.id}`} download>Download logo</a></label>)}</div>
-      {!detail.brand_assets.length && <p>No logo saved. Research will try to collect a published website logo.</p>}
-      <div className="section-title"><h3>Review and edit research records</h3><small>Each record keeps its source page. Your corrections are labelled as rep edits.</small></div>
+      {!detail.brand_assets.length && <p>No logo saved. Research will try to collect a published website logo.</p>}</>}
+      {visibleWeb.length > 0 && <div className="section-title"><h3>Review web findings</h3>
+        <small>Cited from public sources other than the firm's website. Not editable; reputation observations start unticked.</small></div>}
+      <WebReview items={visibleWeb} selected={webSelected} setSelected={setWebSelected} />
+      {website && <><div className="section-title"><h3>Review and edit research records</h3><small>Each record keeps its source page. Your corrections are labelled as rep edits.</small></div>
       {!total && <p>Run research to populate the firm's practice areas, people, offices and facts.</p>}
       {total > 0 && recordKinds.map(([kind, title]) => <details key={kind} className="record-category"><summary><h3 className="category-heading">{title} <span className="badge">{records[kind].length}</span></h3></summary>
         {!records[kind].length && <p className="muted">None found on the website.</p>}
@@ -316,12 +332,9 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
       <div className="review-actions"><button disabled={locked || !dirty}>Save research edits</button>
         <span role="status">{dirty ? 'Unsaved edits — save before approving or re-running research.' : 'All edits saved.'}</span></div>
     </form>
-    {visibleWeb.length > 0 && <div className="section-title"><h3>Review web findings</h3>
-      <small>Cited from public sources other than the firm's website. Not editable; reputation observations start unticked.</small></div>}
-    <WebReview items={visibleWeb} selected={webSelected} setSelected={setWebSelected} />
-    {enrichApollo && detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
+    {SHOW_APOLLO_REVIEW && enrichApollo && detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
       <small>From Apollo's database, not the firm's website. Not editable; untick anything that looks wrong.</small></div>}
-    {enrichApollo && <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />}
+    {SHOW_APOLLO_REVIEW && enrichApollo && <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />}
     <div className="approval-bar"><div><strong>{count} {count === 1 ? 'item' : 'items'} selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
       <button disabled={locked || dirty || !count} onClick={() => approve(visibleSelection, visibleApolloKeys, visibleWebIds)}>Approve &amp; create outputs →</button></div>
   </>
@@ -370,13 +383,13 @@ function WebReview({ items, selected, setSelected }) {
   return ['web_search', 'reputation_search'].map(kind => {
     const group = items.filter(item => item.kind === kind)
     if (!group.length) return null
-    return <div key={kind}><h3>{sourceLabels[kind]} <small>({group.filter(item => selected.includes(item.id)).length} of {group.length} selected)</small></h3>
+    return <details key={kind} className="record-category"><summary><h3 className="category-heading">{sourceLabels[kind]} <small>({group.filter(item => selected.includes(item.id)).length} of {group.length} selected)</small></h3></summary>
       {kind === 'reputation_search' && <p className="reputation-note">Unverified public reputation signals, not a Google review sample or established firm facts. Review before including in sales material.</p>}
       <ul className="apollo-list">{group.map(item => <li key={item.id}><label className="choice">
         <input type="checkbox" checked={selected.includes(item.id)}
           onChange={e => setSelected(e.target.checked ? [...selected, item.id] : selected.filter(n => n !== item.id))} />
         <span>{item.text}</span></label>
-        <div className="source-links">{item.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div></li>)}</ul></div>
+        <div className="source-links">{item.sources.map(s => <a key={s.url} href={s.url} target="_blank" rel="noreferrer">{s.title} ↗</a>)}</div></li>)}</ul></details>
   })
 }
 
@@ -413,6 +426,11 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
       pendingRequest.current = null
     }
   }
+  async function removeRun(job) {
+    const video = job.formats.includes('video') ? ' The Sendspark video stays in Sendspark.' : ''
+    if (!window.confirm(`Permanently delete run #${job.id} and its saved files? This cannot be undone.${video}`)) return
+    if (await mutate(`/${detail.id}/outputs/${job.id}`, undefined, 'DELETE')) setNotice(`Run #${job.id} deleted.`)
+  }
   function retry(job) {
     onApproval(job.approval_id)
     setFormats(job.files.filter(f => f.status !== 'ready').map(f => f.format))
@@ -420,7 +438,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     setNotice('Failed formats selected for a new run. Check the branding and instructions, then generate.')
   }
   return <>
-    <h3>Create a sales pack</h3><p>OpenAI builds each document in its own sandbox. The approved records, brand kit, fonts, images and selected firm logo are uploaded before generation starts.</p>
+    <h3>Create a sales pack</h3><p>OpenAI writes the copy from the approved records. Acctivity brand templates build each file, and validated downloads are saved here.</p>
     {!detail.proposals.length ? <div className="empty-state">No approved brief yet. Review the records in Research, then choose “Approve &amp; create outputs”.</div> :
       <form className="output-form" onSubmit={generate}>
         <label>Approved brief<select value={selectedId} disabled={busy} onChange={e => onApproval(Number(e.target.value))}>
@@ -445,7 +463,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
           <option value="">No firm logo</option>{detail.brand_assets.map(asset => <option key={asset.id} value={asset.id}>Saved firm logo #{asset.id}</option>)}</select></label>
         <label>Sales instructions<textarea maxLength={6000} rows={5} value={instructions} disabled={busy} onChange={e => setInstructions(e.target.value)}
           placeholder="Who is the audience? What should we demonstrate? e.g. Prepare a partner-level discussion focused on family law and a proposed pilot. Do not invent pricing." /></label>
-        <p className="muted">Each selected document uses a separate paid OpenAI request and sandbox; up to three build in parallel. Approved records and selected branding are uploaded to OpenAI. No emails or invitations are sent.</p>
+        <p className="muted">This sends the approved records to OpenAI to write the copy; the logo stays with our templates. Each generation makes one paid API call. No emails or invitations are sent.</p>
         {running && <p role="status">A run is already active. Its stages and downloads are shown below; generation is disabled to prevent duplicate paid runs.</p>}
         {formats.includes('video') && <p className="muted">The video sends only the firm name and website to Sendspark and uses Sendspark video minutes (beyond the plan's allowance, Sendspark charges). Rendering can take several minutes.</p>}
         <button disabled={busy || running || !formats.length || !approval}>{running ? 'Generation in progress…' : 'Generate selected outputs'}</button>
@@ -456,7 +474,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     {detail.outputs.map(job => <article className="output-run" key={job.id}><div className="run-heading"><h3>Run #{job.id} · Brief #{job.approval_id}</h3><span className="badge">{job.status}</span></div>
       <p>{job.stage} · {job.created_at} UTC</p>{job.error && <p role="alert">{job.error}</p>}
       {job.instructions && <details><summary>Sales instructions</summary><p>{job.instructions}</p></details>}
-      <ul className="file-list">{job.files.map(file => <li key={file.id}><strong>{formatLabels[file.format]}</strong>
+      <ul className="file-list">{job.files.map(file => <li key={file.id}><strong>{formatLabels[file.format] || file.format}</strong>
         {file.status === 'ready' && file.url ? <a href={file.url} target="_blank" rel="noreferrer">Watch video ↗</a>
           : file.status === 'ready' ? <a href={`${base}/${detail.id}/outputs/${job.id}/files/${file.id}`}>Download .{file.format} · {Math.ceil(file.size / 1024)} KB</a>
           : <span>{file.error || file.stage || file.status}</span>}
@@ -466,6 +484,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
         {file.preview && <details className="file-progress"><summary>Model response{file.status === 'running' ? ' · live draft' : ''}</summary><pre className="stream-preview">{file.preview}</pre></details>}
       </li>)}</ul>
       {['partial', 'failed'].includes(job.status) && <button type="button" disabled={busy || running} onClick={() => retry(job)}>Prepare retry of failed formats</button>}
+      <button type="button" className="secondary" disabled={busy || ['queued', 'running'].includes(job.status)} onClick={() => removeRun(job)}>Delete run</button>
     </article>)}
     {detail.proposals.some(p => p.status === 'ready') && <details><summary>Earlier PowerPoint downloads</summary>
       {detail.proposals.filter(p => p.status === 'ready').map(p => <p key={p.id}><a href={`${base}/${detail.id}/proposals/${p.id}/download`}>Brief #{p.id} · PowerPoint</a></p>)}</details>}

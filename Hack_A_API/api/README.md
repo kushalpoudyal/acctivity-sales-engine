@@ -54,20 +54,19 @@ connecting a live Acctivity system.
 - **Approve & create outputs:** `POST /api/v1/firms/{id}/approvals` with the selected
   record ids per table copies them into an immutable snapshot. Later edits do not
   change it. No paid call is made at approval.
-- **Create outputs:** choose an approval, PowerPoint (`pptx`), Word (`docx`),
-  welcome PDF (`pdf`), optional saved logo and sales instructions. Each selected
-  document uses its own paid OpenAI request and Code Interpreter sandbox, with
-  up to three in parallel. Before generation, the server uploads `brand-assets.zip`,
-  `approved-firm.json` and the selected firm logo. The archive contains the brand
-  guide, logos, fonts, licensed images and background, not the demo video.
-  OpenAI creates the actual files; the server validates and saves downloads in SQLite.
+- **Create outputs:** choose an approval, PowerPoint (`pptx`), welcome PDF (`pdf`),
+  personalised AI video (`video`), optional saved logo and sales instructions. One paid OpenAI
+  call writes short copy (titles, summary, proposed opportunities, pilot, next steps,
+  demo agenda) from the approved records; `documents.py` then builds each file from
+  our Acctivity brand templates. Each file is validated and saved in SQLite, and reports its
+  stage and timings; the streamed copy call shows a live draft.
 
 `POST /api/v1/firms/{id}/outputs` accepts:
 
 ```json
 {
   "approval_id": 1,
-  "formats": ["pptx", "docx", "pdf"],
+  "formats": ["pptx", "pdf"],
   "instructions": "Partner-level proposal for a proposed family law pilot.",
   "logo_id": null,
   "request_key": "fe829ab4-abcc-4cd7-97ba-9a7f5484b9e2"
@@ -97,37 +96,51 @@ use the Python SDK's streaming interface. Search requests explicitly enable
 is not an approved finding; final cited results become available per source even
 while other source tasks are running.
 
-Each output file tracks its own stage, container ID, timestamps and bounded
-streamed response preview. Stages include asset uploads, code generation/execution,
-download and validation. The UI uses an
+Each output file tracks its own stage, timestamps and the bounded streamed preview of the
+shared copy call. Stages include writing the copy, building from the Acctivity template
+and validation. The UI uses an
 indeterminate activity indicator with actual stages and elapsed/last-activity
 times. File downloads appear as each file is saved, without waiting for the
 others. Older runs cannot gain event history retroactively.
 
 The shared model defaults to `gpt-6.1-sol`. A selected logo is copied into the job
-so later research cannot change that run's branding; it is uploaded to each selected
-document's sandbox along with the approved records. No live tenant/user creation, email sending or
+so later research cannot change that run's branding; it stays with our templates and is
+never sent to OpenAI. No live tenant/user creation, email sending or
 invitations occur. Keep this unauthenticated prototype on loopback, not a public network.
 
 ### Acctivity brand kit and templates
 
-`brand/BRAND.md` is the brand guide uploaded to the sandbox. The existing
-`documents.py` local templates remain for the older proposal endpoint. The kit uses
+`brand/BRAND.md` is the brand guide that `documents.py` implements for Create outputs and the
+older proposal endpoint. Layouts follow the Acctivity slide template: plain pages, illustrations
+only as edge panels or inline on white, never over a background (OpenAI sandbox generation was
+tried 19/11 and replaced by these templates). The kit uses
 the Acctivity logo and mark, the palette (Slate Grey `#3D443D` and Steel Blue `#4396BA`,
 with Light Pink, Gold and Light Grey accents), Lora headings and Inter body text, and
-the watercolour background and illustrations from `brand/`.
+the illustrations from `brand/` (the watercolour background is not used in outputs).
 
 - **PPTX** (16:9): cover, firm at a glance, what stands out, practice areas, people,
   proposed opportunities and pilot, next steps, sources.
-- **DOCX** (A4): the same proposal as an editable document with tables.
 - **PDF** (A4): a welcome guide for a prospective demo, with the brand fonts embedded.
 
-python-pptx and python-docx cannot embed fonts, so Word and PowerPoint need Lora and
+Word (DOCX) generation was removed on 19/11; Word files from earlier runs are no longer served.
+python-pptx cannot embed fonts, so PowerPoint needs Lora and
 Inter installed (both free Google Fonts) to show the exact typography; otherwise they
 fall back to a serif for headings and a sans serif for body text. Inter and Lora are
 SIL Open Font License fonts (`brand/fonts/*-OFL.txt`). Images are 1600px JPEG copies
 of the brand pack. The older `POST .../proposals/{id}/build` endpoint uses the same
 PowerPoint template.
+
+### Hard delete
+
+- `DELETE /api/v1/firms/{id}/outputs/{job_id}` permanently removes one output run and its saved
+  files (**Delete run** in Create outputs).
+- `DELETE /api/v1/firms/{id}` permanently removes the firm and everything stored for it: pages,
+  research records, web findings, logos, approvals, output runs and Apollo contacts
+  (**Delete firm** in the workspace header).
+
+Both answer `{"id": ..., "deleted": true}`, refuse with 409 while research or a run is in
+progress, and cannot be undone. Nothing is removed from Apollo or Sendspark (a deleted run's
+video stays in the Sendspark campaign).
 
 ### Personalised AI video (Sendspark)
 
@@ -257,7 +270,7 @@ Without a host Python, run the suite in the API image:
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
 The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`
 overrides the shared default, with `OPENAI_RESEARCH_MODEL` and `OPENAI_DECK_MODEL`
-(the sandbox call) overriding individual operations. API model access depends on the
+(the copy call) overriding individual operations. API model access depends on the
 OpenAI account.
 
 Website extraction uses low reasoning effort and concise descriptions, biographies
@@ -282,9 +295,8 @@ The website source fills the research records (and is the only one that saves lo
 Search observations are saved in the `web_findings` table with `kind` `web_search` or
 `reputation_search`, their citations and retrieval time; a search that runs replaces that
 kind's earlier findings, while a failed or disabled search keeps them. Approve them by id
-(`"web_findings": [ids]`); approved ones go into the snapshot's `web` list, appear in the
-Word proposal under "From the wider web" or "Public reputation (unverified)", and their
-text (never personal contact data) informs the copy call.
+(`"web_findings": [ids]`); approved ones go into the snapshot's `web` list, their sources
+are listed in the outputs, and their text (never personal contact data) informs the copy call.
 
 ### Source selection and Apollo in the same research request
 
@@ -350,9 +362,9 @@ per revealed contact (email, LinkedIn). Each has a stable `key` (e.g. `apollo:te
 "Source: Apollo, retrieved …" source label and no evidence passage. Approve with
 `{"brief_token", "people": [ids], ..., "apollo_findings": [keys]}`; only the selected ones go
 into the snapshot's `apollo` list, so the demo export and outputs see nothing that was unticked.
-Outputs label them as Apollo-reported: approved contacts join the people lists (the Word
-proposal shows their email and LinkedIn), and industries, keywords and technology appear as
-"Reported by Apollo". Revealed emails and LinkedIn URLs are never sent to OpenAI.
+Outputs label them as Apollo-reported: approved contacts join the people lists, and the deck
+notes that industries, technology and contacts are as reported by Apollo. Revealed emails and
+LinkedIn URLs are never sent to OpenAI and do not appear in the PPTX or PDF.
 `brief_token` also covers the Apollo findings, so a new enrich or reveal asks for a fresh review.
 
 This single-process local prototype uses the ignored `prospects.sqlite3` database

@@ -37,7 +37,7 @@ Decisions and progress go in `LOG.md` (append-only).
 
 Local prototype, single process, **no auth** (keep both dev servers on loopback). Details in `Hack_A_API/api/README.md`.
 
-**Flow = input approach 1 (website only):** add firm → research its website → review + edit + approve records → generate branded PPTX / DOCX / PDF, or a demo export.
+**Flow = input approach 1 (website only):** add firm → research its website → review + edit + approve records → generate branded PPTX / PDF and a personalised AI video, or a demo export.
 
 **API** (`Hack_A_API/api/`, FastAPI on `127.0.0.1:9001`, docs at `/docs`):
 
@@ -50,7 +50,9 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
 | PUT | `/api/v1/firms/{id}/brief` | save rep edits to the firm name, preferred logo and records |
 | GET | `/api/v1/firms/{id}/brand-assets/{asset_id}` | saved logo |
 | POST | `/api/v1/firms/{id}/approvals` | approve the selected records → frozen snapshot (no paid call) |
-| POST | `/api/v1/firms/{id}/outputs` | **paid** copy call + brand templates → PPTX / DOCX / PDF (async, 202); download from `.../outputs/{job}/files/{file}` |
+| POST | `/api/v1/firms/{id}/outputs` | **paid** copy call + brand templates → PPTX / PDF, and/or a Sendspark `video` (async, 202); download from `.../outputs/{job}/files/{file}` |
+| DELETE | `/api/v1/firms/{id}/outputs/{job_id}` | hard delete one output run and its files (409 while running) |
+| DELETE | `/api/v1/firms/{id}` | hard delete the firm and everything stored for it (409 while research or a run is in progress) |
 | POST | `/api/v1/firms/{id}/proposals/{proposal_id}/build` | build the `.pptx` (async, 202) |
 | GET | `/api/v1/firms/{id}/proposals/{proposal_id}/download` | download the `.pptx` |
 | GET | `/api/v1/firms/{id}/proposals/{proposal_id}/demo-export` | JSON staging payload of approved records + logo links |
@@ -66,12 +68,12 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
   values in `original`. Approvals freeze the selected records as a JSON snapshot (`version: 2`).
 - **Outputs (`outputs.py` + `documents.py`, Kushal 18/11):** one paid OpenAI call writes short copy (title, summary,
   proposed opportunities, pilot, next steps, demo agenda) from the approved records; our own templates build the PPTX
-  (16:9 proposal), DOCX (A4 proposal) and PDF (A4 welcome guide). No Code Interpreter container. The older
+  (16:9 proposal) and PDF (A4 welcome guide); Word (DOCX) was removed 19/11. No Code Interpreter container. The older
   `proposals/{id}/build` endpoint uses the same PPTX template.
 - **Brand kit (`Hack_A_API/api/brand/`, Kushal 18/11):** Acctivity logo + "Acc" mark, palette (Slate Grey `#3D443D`,
   Steel Blue `#4396BA`, accents Light Pink/Gold/Rouge/Light Grey), Lora headings + Inter body, watercolour illustrations
   and background. `brand/BRAND.md` is the guide the templates implement. Generated material uses Acctivity colours only
-  (prospect logo optional, cover only). PDF embeds the fonts; PPTX/DOCX need Lora + Inter installed, else serif/sans fallback.
+  (prospect logo optional, cover only). PDF embeds the fonts; PPTX needs Lora + Inter installed, else serif/sans fallback.
 - **Apollo (optional, click-to-spend; `apollo.py`, `find_firms.py`, `apollo_findings.py`):** firm enrichment (1 credit,
   stored on the firm), free people search, email reveal (1 credit per person, batches of 10, never twice) into an
   `apollo_contacts` table kept apart from website research and linked to `people` by name; industries, keywords, tech
@@ -91,7 +93,7 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
 
 **Client** (`Hack_A_CLIENT/`, Vite dev server on `127.0.0.1:5173`, proxies `/api/v1` → `:9001`):
 - `/prospects`: live directory (`Prospects.jsx`): add/filter firms, run or re-extract research, review/edit records by kind
-  (practice areas, people with linked areas, offices, facts) with source links, approve, generate + download PPTX/DOCX/PDF.
+  (practice areas, people with linked areas, offices, facts) with source links, approve, generate + download PPTX/PDF, delete output runs, delete the firm.
 - Find firms panel (Apollo search, review list, add to directory) and Apollo panels in the Research tab
   (enrich, find people, reveal emails, Apollo contacts table, review Apollo findings).
 - `/sales-studio.html`: clickable **mockup** of the full sales engine (browse firms, add one with optional **Apollo**
@@ -146,14 +148,14 @@ updates stream (`demo_seed`). It also registers the Docs Core matter-type provid
 - Q4: ~~does "tailored demo environment" stay in scope?~~ answered 19/11: yes, seed a per-rep Acctivity test firm per prospect (design in TECHNICAL_DESIGN.md, platform facts in ACCTIVITY.md). Previously:
   a live Acctivity environment needs an agreed deployment API, required fields and a safe demo-account policy.
 - Q5: LLM provider / image generation / slide-deck tool. As built: OpenAI for research + copy; our own python-pptx /
-  python-docx / reportlab templates for the files.
+  reportlab templates for the files (Word removed 19/11).
   Images still open. Video candidate: **Sendspark** (see `SENDSPARK.md`)
 - Q6: ~~approach 1 first or straight to Apollo?~~ answered 18/11: Apollo is an optional add-on (enrich + find firms), click-to-spend. Plan in LOG.md; issues #3–#7.
 
 ## Tools researched
 
 - [Product requirements](./REQUIREMENTS.md): hackathon scope, acceptance checks and optional Apollo checkbox.
-- [Technical design and implementation status](./TECHNICAL_DESIGN.md): research, approvals, normalised research records, branding and template-built PPTX/DOCX/PDF downloads.
+- [Technical design and implementation status](./TECHNICAL_DESIGN.md): research, approvals, normalised research records, branding and template-built PPTX/PDF downloads.
 
 - **Sendspark** (videos): `SENDSPARK.md`. API + webhooks on Growth ($99/mo); fills variables into one recorded base video; async, poll or webhook.
 - **Acctivity** (demo environment seeding): `ACCTIVITY.md`. Where firm/user/matter/time data lives, service-login probe results on test.
