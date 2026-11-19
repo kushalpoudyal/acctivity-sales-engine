@@ -158,31 +158,41 @@ def run_outputs(job_id: int):
             raise RuntimeError("Queued output job was not found.")
         job = {**dict(row), "formats": json.loads(row["formats"])}
         db.execute("UPDATE output_jobs SET status='running',stage='Starting' WHERE id=?", (job_id,))
-        db.execute("UPDATE output_files SET status='running' WHERE job_id=?", (job_id,))
     error = None
     documents = [format for format in job["formats"] if format != "video"]
-    try:
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = {}
         if documents:
-            generate_outputs(job_id, {**job, "formats": documents})
-    except Exception as exc:
-        # This background-task boundary must leave a persisted terminal state.
-        logging.error("Output job %s failed (%s).", job_id, type(exc).__name__)
-        error = (str(exc) if isinstance(exc, (DeckError, ModelStreamError)) else
-                 "OpenAI request timed out. Prepare a retry of this run." if isinstance(exc, openai.APITimeoutError) else
-                 "Output build failed. Check provider access or retry this run.")
-    with database() as db:
-        # Settle the documents now; the video can take minutes longer.
-        db.execute("""UPDATE output_files SET status='failed',error=?
-                      WHERE job_id=? AND format!='video' AND status!='ready' AND status!='failed'""",
-                   (error or "No file returned for this format.", job_id))
-    if "video" in job["formats"]:
-        # The video has its own provider, so a document failure does not stop it.
-        try:
-            update_stage(job_id, "Rendering the personalised video in Sendspark")
-            generate_video(job_id, job)
-        except Exception:
-            logging.exception("Output job %s could not create the video.", job_id)
-            save_video(job_id, None, "Could not create the video. See the API log.")
+            futures[executor.submit(generate_outputs, job_id, {**job, "formats": documents})] = "documents"
+        if "video" in job["formats"]:
+            futures[executor.submit(generate_video, job_id, job)] = "video"
+        remaining = set(futures.values())
+        for future in as_completed(futures):
+            kind = futures[future]
+            try:
+                future.result()
+            except Exception as exc:
+                # Settle each independent provider task without losing the other's results.
+                logging.error("Output job %s %s failed (%s).", job_id, kind, type(exc).__name__)
+                if kind == "video":
+                    save_video(job_id, None, "Could not create the video. Check Sendspark or retry.")
+                else:
+                    error = (str(exc) if isinstance(exc, (DeckError, ModelStreamError)) else
+                             "OpenAI request timed out. Prepare a retry of this run."
+                             if isinstance(exc, openai.APITimeoutError) else
+                             "Output build failed. Check provider access or retry this run.")
+            if kind == "documents":
+                with database() as db:
+                    unfinished = [row["format"] for row in db.execute(
+                        """SELECT format FROM output_files WHERE job_id=? AND format!='video'
+                           AND status NOT IN ('ready','failed')""", (job_id,))]
+                for format in unfinished:
+                    save_file(job_id, format, None, error or "No file returned for this format.")
+            remaining.remove(kind)
+            if remaining == {"video"}:
+                update_stage(job_id, "Waiting for Sendspark video; documents have finished")
+            elif remaining == {"documents"}:
+                update_stage(job_id, "Video has finished; documents are still generating")
     with database() as db:
         db.execute("""UPDATE output_files SET status='failed',error=?
                       WHERE job_id=? AND status!='ready' AND status!='failed'""",

@@ -340,7 +340,7 @@ function ResearchProgress({ meta, active, lastPollAt }) {
     return `${Math.floor(seconds / 60)}m ${seconds % 60}s`
   }
   return <div>
-    {running ? <p className="coverage">{meta.started_at && `Elapsed ${duration(meta.started_at)} · `}
+    {running ? <p className="coverage live-timer">{meta.started_at && `Elapsed ${duration(meta.started_at)} · `}
       {lastPollAt && `API last responded ${Math.max(0, Math.floor((now - lastPollAt) / 1000))}s ago`}
       {meta.updated_at && ` · Last progress ${duration(meta.updated_at)} ago`}</p> :
       <p className="coverage">{meta.finished_at ? 'Research finished' : 'Research stopped'}
@@ -353,8 +353,8 @@ function ResearchProgress({ meta, active, lastPollAt }) {
       <div key={source}><strong>{sourceLabels[source]}</strong>
         <span>{sourceRunning ? result.stage || status : status}{result.findings != null && ` · ${result.findings} findings`}</span>
         {result.started_at && (sourceRunning || result.finished_at || meta.finished_at || meta.updated_at) &&
-          <small>{sourceRunning ? 'Elapsed' : 'Duration'} {duration(result.started_at, result.finished_at || (!sourceRunning ? meta.finished_at || meta.updated_at : undefined))}</small>}
-        {result.characters_received > 0 && <small> · {result.characters_received.toLocaleString()} response characters received</small>}
+          <small className={sourceRunning ? 'live-timer' : undefined}>{sourceRunning ? 'Elapsed' : 'Duration'} {duration(result.started_at, result.finished_at || (!sourceRunning ? meta.finished_at || meta.updated_at : undefined))}</small>}
+        {result.characters_received > 0 && <small className={sourceRunning ? 'live-timer' : undefined}> · {result.characters_received.toLocaleString()} response characters received</small>}
         {result.error && <p>{result.error}</p>}
         {sourceRunning && result.preview && <details open><summary>Live draft — not yet verified</summary><pre className="stream-preview">{result.preview}</pre></details>}
         {result.findings_preview?.length > 0 && <details><summary>Read sourced results now</summary>
@@ -460,9 +460,9 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
         {file.status === 'ready' && file.url ? <a href={file.url} target="_blank" rel="noreferrer">Watch video ↗</a>
           : file.status === 'ready' ? <a href={`${base}/${detail.id}/outputs/${job.id}/files/${file.id}`}>Download .{file.format} · {Math.ceil(file.size / 1024)} KB</a>
           : <span>{file.error || file.stage || file.status}</span>}
-        {file.started_at && <small className="file-progress">{elapsed(file)} elapsed
+        {file.started_at && <small className={`file-progress${file.status === 'running' ? ' live-timer' : ''}`}>{elapsed(file)} elapsed
           {file.status === 'running' && file.updated_at && ` · Last activity ${Math.max(0, Math.floor((now - Date.parse(file.updated_at)) / 1000))}s ago`}</small>}
-        {file.status === 'running' && <progress className="file-progress" aria-label={`${formatLabels[file.format]} build in progress`} />}
+        {file.status === 'running' && file.started_at && <progress className="file-progress" aria-label={`${formatLabels[file.format]} build in progress`} />}
         {file.preview && <details className="file-progress"><summary>Model response{file.status === 'running' ? ' · live draft' : ''}</summary><pre className="stream-preview">{file.preview}</pre></details>}
       </li>)}</ul>
       {['partial', 'failed'].includes(job.status) && <button type="button" disabled={busy || running} onClick={() => retry(job)}>Prepare retry of failed formats</button>}

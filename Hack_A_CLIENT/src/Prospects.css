@@ -234,6 +234,7 @@
 .prospects .file-progress { flex-basis: 100%; max-width: 100%; }
 .prospects progress { height: 8px; accent-color: var(--blue-600); }
 .prospects .connection-status { font-size: .85rem; color: var(--grey-700); }
+.prospects .live-timer { color: #176450; font-weight: 600; font-variant-numeric: tabular-nums; }
 
 @media (max-width: 1000px) {
   .prospects .prospect-grid { grid-template-columns: 300px minmax(0, 1fr); }
