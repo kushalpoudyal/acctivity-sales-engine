@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from prospects import get_firm
@@ -13,7 +13,10 @@ router = APIRouter(prefix="/api/v1/firms", tags=["Live updates"])
 async def firm_events(request: Request, firm_id: int):
     previous, heartbeat = None, 0.0
     while not await request.is_disconnected():
-        firm = await asyncio.to_thread(get_firm, firm_id)
+        try:
+            firm = await asyncio.to_thread(get_firm, firm_id)
+        except HTTPException:
+            return  # The firm was deleted.
         payload = json.dumps(firm, separators=(",", ":"))
         if payload != previous:
             yield f"data: {payload}\n\n"

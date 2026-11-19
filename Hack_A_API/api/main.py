@@ -60,4 +60,5 @@ def openai_test() -> dict[str, str]:
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="127.0.0.1", port=9001, reload=True)
+    # Open live-update streams (SSE) would otherwise keep the old worker alive and stall every reload.
+    uvicorn.run("main:app", host="127.0.0.1", port=9001, reload=True, timeout_graceful_shutdown=2)

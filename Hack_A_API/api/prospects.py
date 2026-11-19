@@ -239,6 +239,38 @@ def get_firm(firm_id: int):
             "proposals": proposals, "brand_assets": assets, "outputs": outputs}
 
 
+# Children before the rows they reference: foreign keys are enforced.
+FIRM_TABLES = ("facts", "practice_areas", "people", "offices", "web_findings", "apollo_contacts",
+               "brand_assets", "output_jobs", "proposals", "pages")
+
+
+@router.delete("/{firm_id}")
+def delete_firm(firm_id: int):
+    """Hard delete a firm and everything stored for it. Nothing is removed from Apollo or Sendspark."""
+    with database() as db:
+        db.execute("BEGIN IMMEDIATE")
+        firm = db.execute("SELECT status FROM firms WHERE id=?", (firm_id,)).fetchone()
+        if not firm:
+            raise HTTPException(404, "Firm not found.")
+        running = db.execute("""SELECT 1 FROM output_jobs WHERE firm_id=? AND status IN ('queued','running')
+                                UNION SELECT 1 FROM proposals WHERE firm_id=? AND status='building'""",
+                             (firm_id, firm_id)).fetchone()
+        if firm["status"] == "researching" or running:
+            raise HTTPException(409, "Research or output generation is still running. Delete the firm once it has finished.")
+        db.execute("DELETE FROM person_practice_areas WHERE person_id IN (SELECT id FROM people WHERE firm_id=?)",
+                   (firm_id,))
+        db.execute("DELETE FROM output_files WHERE job_id IN (SELECT id FROM output_jobs WHERE firm_id=?)", (firm_id,))
+        for table in FIRM_TABLES:
+            db.execute(f"DELETE FROM {table} WHERE firm_id=?", (firm_id,))
+        # Tables from earlier versions (e.g. staff) still hold firm rows in older databases.
+        for (table,) in db.execute("""SELECT m.name FROM sqlite_master m JOIN pragma_table_info(m.name) c
+                                      WHERE m.type='table' AND c.name='firm_id'""").fetchall():
+            if table not in FIRM_TABLES:
+                db.execute(f"DELETE FROM {table} WHERE firm_id=?", (firm_id,))
+        db.execute("DELETE FROM firms WHERE id=?", (firm_id,))
+    return {"id": firm_id, "deleted": True}
+
+
 class ApolloEnrich(BaseModel):
     refresh: bool = False
 
