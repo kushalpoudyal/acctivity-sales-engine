@@ -144,6 +144,33 @@ cannot upload or edit them. Sendspark identifies prospects by email, so each fir
 plus-address on `SENDSPARK_PROSPECT_EMAIL` (e.g. `sales+cbdlaw-com-au@...`). The option is disabled
 until all five `SENDSPARK_*` settings are in `.env`. A video-only run makes no OpenAI call.
 
+### Demo plan (issue #18)
+
+The plan for seeding a rep's Acctivity test firm with one prospect (design: `context/TECHNICAL_DESIGN.md`
+→ Demo environment). `demo_templates.py` holds the hand-written data: five area-of-law templates (family,
+conveyancing & property, wills & estates, commercial, litigation: matter types by name, time-entry text,
+fixed fees, disbursements) and the hourly rate table by seniority × region (AU states, NZ). **Rates, fees and
+disbursements are drafts, to be checked by sales; amounts exclude GST.** `demo_plan.py` builds the plan
+deterministically from an approved snapshot, a date and a seed; one optional OpenAI call (`tailor`) rewrites
+client names, matter descriptions and time-entry notes only.
+
+| Method | Path | What it does |
+|--------|------|--------------|
+| POST | `/api/v1/firms/{id}/demo-plan` | `{"approval_id", "country"?, "state"?, "seed"?, "tailor": true}` → generate, validate and save the firm's plan (replaces the previous one). **Paid** OpenAI call unless `tailor` is false. 404 unknown approval, 422 nothing resolves, 503 no matter-type provider. |
+| GET | `/api/v1/firms/{id}/demo-plan` | the saved plan: `{firm_id, approval_id, plan, errors, edited, created_at, updated_at}` |
+| PUT | `/api/v1/firms/{id}/demo-plan` | `{"plan": {...}}` the rep's edited plan. Matter-type ids are re-resolved from the names, entry rates/amounts follow the staff rates, billed flags follow the invoices; then it is re-validated. Invalid → 422 `{"detail": {"message", "errors": [{"path", "message"}]}}`, nothing saved. |
+
+Matter types come from Docs Core's matter-type tree, which needs the rep's demo-firm login (#17). The
+seeder work sets `demo_plan.set_matter_type_provider(fn)`, where `fn(country, state)` returns the tree's
+`MatterType` leaves as `[{"id", "name", "path": [top folder, …, name]}]` and raises
+`demo_plan.MatterTypesUnavailable` when the token is missing or expired. Until then generating returns 503.
+
+Region comes from the request, else the approved offices' addresses and the domain (assumed AU-NSW with a
+flag). Staff are names and titles only (never emails or phones), in slot order 1–6: managing partner, 2
+partners covering the main areas, senior associate, associate, paralegal, then the next by seniority.
+15–25 matters split by practice-area weight (1 + people per area); unmatched areas use the closest template
+with a `template_fallback` flag. Time: every weekday for 3–4 weeks ending today, 4–6 h per person per day
+in 0.1 h steps; 2–3 matters invoiced so about 80% of hours stay unbilled.
 ### Demo environment logins and guards
 
 `demo_logins.py` is how the demo seeder and wipe reach a rep's Acctivity **test** firm. It uses two logins:
@@ -187,8 +214,10 @@ reports whether writes would pass the guards. It writes nothing.
 ### Focused checks
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents test_apollo test_find_firms test_apollo_contacts test_apollo_findings test_web_research test_model_stream test_sendspark test_demo_logins
+.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents test_apollo test_find_firms test_apollo_contacts test_apollo_findings test_web_research test_model_stream test_sendspark test_demo_plan test_demo_logins
 ```
+Without a host Python, run the suite in the API image:
+`docker run --rm -v "<repo>/Hack_A_API/api:/app" -w /app acctivity-sales-engine-api python -m unittest`.
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
 The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`
 overrides the shared default, with `OPENAI_RESEARCH_MODEL` and `OPENAI_DECK_MODEL`

@@ -54,6 +54,7 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
 | POST | `/api/v1/firms/{id}/proposals/{proposal_id}/build` | build the `.pptx` (async, 202) |
 | GET | `/api/v1/firms/{id}/proposals/{proposal_id}/download` | download the `.pptx` |
 | GET | `/api/v1/firms/{id}/proposals/{proposal_id}/demo-export` | JSON staging payload of approved records + logo links |
+| POST / GET / PUT | `/api/v1/firms/{id}/demo-plan` | generate (optional **paid** tailoring call) / read / edit + re-validate the firm's demo plan (#18) |
 
 - **Research (`firm_research.py`):** obeys robots.txt; firm's own domain (+www) only; prioritises staff/about/contact/service pages;
   stops at 32 pages / 240k chars / 150 s; no login, JavaScript rendering or PDFs (so Cloudflare-challenged sites such as
@@ -76,6 +77,12 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
   stack and contacts are approvable Apollo findings (`apollo` in the snapshot), shown in outputs as Apollo-reported.
   Revealed emails never go to OpenAI. **Find firms** searches Apollo for small/medium law firms (1 credit/page).
 - **Demo export:** our own JSON schema, **not** an Acctivity import contract; creates no tenants/users and sends no invites.
+- **Demo plan (`demo_plan.py` + `demo_templates.py`, #18, branch `demo-plan`):** what the seeder (#19) will write into a
+  rep's test firm: 1–6 staff (real names + titles only), 15–25 matters with fictional clients, 3–4 weeks of time, fixed
+  fees, disbursements and 2–3 invoices; deterministic from approval + date + seed, one optional OpenAI call tailors
+  names/descriptions only; saved per firm in `demo_plans`. Rates and fees are **drafts to be checked by sales**. Matter
+  types resolve against Docs Core through an injected provider that #17/#19 must supply (503 until then). Details in
+  `Hack_A_API/api/README.md` → Demo plan.
 - **Models:** research + deck default `gpt-6.1-sol`; override with `OPENAI_MODEL`, or per step `OPENAI_RESEARCH_MODEL` /
   `OPENAI_DECK_MODEL`. Only `OPENAI_API_KEY` is required (`.env`). The README and `.env.example` also mention
   `gpt-5.4-mini` as the default; in code that's only the `/openai/test` fallback.
