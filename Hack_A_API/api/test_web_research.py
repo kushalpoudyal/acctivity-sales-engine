@@ -1,9 +1,12 @@
 import tempfile
+import os
 import unittest
 from pathlib import Path
 from threading import Barrier
 from types import SimpleNamespace as Record
 from unittest.mock import patch
+from fastapi import BackgroundTasks, HTTPException
+from pydantic import ValidationError
 
 import prospects
 import openai
@@ -13,6 +16,91 @@ from web_research import cited_search_findings
 
 
 class ParallelResearchTests(unittest.TestCase):
+    def test_all_four_sources_run_concurrently_including_apollo(self):
+        barrier = Barrier(4)
+
+        def website(*args):
+            barrier.wait(timeout=3)
+            return RECORDS, PAGES, [], []
+
+        def search(*args, **kwargs):
+            barrier.wait(timeout=3)
+            return []
+
+        def enrich(domain):
+            barrier.wait(timeout=3)
+            return {"name": "Firm", "industries": ["law practice"]}
+
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            prospects, "DB_PATH", Path(folder) / "test.sqlite3"
+        ), patch.dict(os.environ, {"APOLLO_API_KEY": "test-key"}), \
+                patch("prospects.crawl_research", side_effect=website), \
+                patch("prospects.search_web", side_effect=search), \
+                patch("prospects.apollo.enrich_org", side_effect=enrich) as organization, \
+                patch("prospects.apollo.search_people", return_value={"people": [
+                    {"id": "p1", "first_name": "Jane", "title": "Partner", "has_email": True}
+                ]}) as people, patch("prospects.apollo.reveal") as reveal:
+            prospects.initialize()
+            firm = prospects.add_firm(prospects.Intake(website="firm.example"))
+            prospects.research(firm["id"], "firm.example", prospects.ResearchOptions(apollo=True))
+            detail = prospects.get_firm(firm["id"])
+        organization.assert_called_once_with("firm.example")
+        people.assert_called_once()
+        reveal.assert_not_called()
+        self.assertEqual(detail["apollo_org"]["name"], "Firm")
+        source = detail["research_meta"]["sources"]["apollo"]
+        self.assertEqual(source["status"], "completed")
+        self.assertEqual(source["contact_search"]["candidates"][0]["apollo_id"], "p1")
+        self.assertEqual(set(detail["research_meta"]["sources"]), {"website", "web_search", "reputation", "apollo"})
+
+    def test_apollo_only_needs_no_openai_and_preserves_website_records(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            prospects, "DB_PATH", Path(folder) / "test.sqlite3"
+        ), patch.dict(os.environ, {"OPENAI_API_KEY": "", "APOLLO_API_KEY": "test-key"}), \
+                patch("prospects.apollo.enrich_org", return_value={"name": "Firm"}), \
+                patch("prospects.apollo.search_people", return_value={"people": []}), \
+                patch("prospects.crawl_research") as crawl, patch("prospects.search_web") as search:
+            prospects.initialize()
+            firm = prospects.add_firm(prospects.Intake(website="firm.example"))
+            with prospects.database() as db:
+                prospects.store_research(db, firm["id"], PAGES, RECORDS)
+            tasks = BackgroundTasks()
+            options = prospects.ResearchOptions(website=False, web_search=False, reputation=False, apollo=True)
+            self.assertEqual(prospects.start_research(firm["id"], tasks, options)["status"], "researching")
+            prospects.research(firm["id"], "firm.example", options)
+            detail = prospects.get_firm(firm["id"])
+            self.assertEqual(detail["status"], "ready")
+            self.assertEqual(detail["records"]["people"][0]["full_name"], "Jane Smith")
+            self.assertEqual(set(detail["research_meta"]["sources"]), {"apollo"})
+            self.assertFalse(detail["research_meta"]["selection"]["website"])
+            crawl.assert_not_called()
+            search.assert_not_called()
+
+    def test_disabled_apollo_makes_no_calls_and_empty_selection_is_rejected(self):
+        with self.assertRaises(ValidationError):
+            prospects.ResearchOptions(website=False, web_search=False, reputation=False, apollo=False)
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            prospects, "DB_PATH", Path(folder) / "test.sqlite3"
+        ), patch("prospects.crawl_research", return_value=(RECORDS, PAGES, [], [])), \
+                patch("prospects.apollo.enrich_org") as enrich, patch("prospects.apollo.search_people") as people:
+            prospects.initialize()
+            firm = prospects.add_firm(prospects.Intake(website="firm.example"))
+            prospects.research(firm["id"], "firm.example", prospects.ResearchOptions(web_search=False, reputation=False))
+            enrich.assert_not_called()
+            people.assert_not_called()
+            self.assertNotIn("apollo", prospects.get_firm(firm["id"])["research_meta"]["sources"])
+
+    def test_missing_apollo_configuration_rejects_before_any_job_starts(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(
+            prospects, "DB_PATH", Path(folder) / "test.sqlite3"
+        ), patch.dict(os.environ, {"APOLLO_API_KEY": ""}):
+            prospects.initialize()
+            firm = prospects.add_firm(prospects.Intake(website="firm.example"))
+            with self.assertRaises(HTTPException) as unavailable:
+                prospects.start_research(firm["id"], BackgroundTasks(), prospects.ResearchOptions(apollo=True))
+            self.assertEqual(unavailable.exception.status_code, 503)
+            self.assertEqual(prospects.get_firm(firm["id"])["status"], "new")
+
     def test_search_citations_are_saved_with_reputation_label(self):
         response = Record(status="completed", output=[
             Record(type="web_search_call", status="completed"),

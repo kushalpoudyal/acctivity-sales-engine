@@ -64,9 +64,9 @@ class SendsparkTests(unittest.TestCase):
         tasks = BackgroundTasks()
         outputs.create_outputs(self.firm["id"], outputs.OutputRequest(
             approval_id=self.approval["id"], formats=["video"], request_key=uuid4()), tasks)
-        with patch("outputs.write_copy") as write_copy:
+        with patch("outputs.build_document") as build_document:
             asyncio.run(tasks())
-        write_copy.assert_not_called()
+        build_document.assert_not_called()
         return prospects.get_firm(self.firm["id"])["outputs"][0]
 
     def test_video_sends_only_the_firm_name_and_saves_the_share_link(self):

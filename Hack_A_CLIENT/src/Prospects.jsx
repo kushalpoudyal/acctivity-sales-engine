@@ -3,6 +3,7 @@ import './Prospects.css'
 import logo from './assets/logo.png'
 import firmIcon from './assets/icon-firm.svg'
 import FindFirms from './FindFirms'
+import { requestKey } from './requestKey'
 
 // Find firms (Apollo search) is hidden for now; set to true to show it again.
 const SHOW_FIND_FIRMS = false
@@ -14,7 +15,7 @@ const base = '/api/v1/firms'
 const labels = { new: 'Not researched', researching: 'Researching', ready: 'Brief ready', needs_review: 'Needs review', failed: 'Research failed' }
 const formatLabels = { pptx: 'PowerPoint proposal', docx: 'Word proposal', pdf: 'Welcome PDF', video: 'Personalised AI video' }
 const formatHints = { pptx: '.pptx · Editable sales material', docx: '.docx · Editable sales material', pdf: '.pdf · Prospective demo welcome guide', video: 'Sendspark · the AI voice says the firm name' }
-const sourceLabels = { website: 'Website crawl', website_crawl: 'Website crawl', web_search: 'OpenAI web search', reputation: 'Public reputation search', reputation_search: 'Public reputation search' }
+const sourceLabels = { website: 'Website crawl', website_crawl: 'Website crawl', web_search: 'OpenAI web search', reputation: 'Public reputation search', reputation_search: 'Public reputation search', apollo: 'Apollo enrichment and contacts' }
 
 async function request(path = '', options) {
   const controller = new AbortController()
@@ -155,8 +156,9 @@ function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt }) {
   // Apollo changes the review token, which resets the research editor, so Apollo actions wait for saved edits.
   const apolloBusy = busy || dirty || detail.status === 'researching'
   const apollo = <>
-    <ApolloPanel detail={detail} busy={apolloBusy} submit={submit} />
-    {detail.apollo_configured && <ApolloContacts detail={detail} busy={apolloBusy} submit={submit} />}
+    <ApolloPanel detail={detail} busy={apolloBusy} submit={submit} resultsOnly />
+    {detail.apollo_configured && <ApolloContacts detail={detail} busy={apolloBusy} submit={submit}
+      initialResult={detail.research_meta?.sources?.apollo?.contact_search} />}
     {dirty && detail.apollo_configured && <p className="coverage">Save or discard research edits before using Apollo.</p>}
     <ApolloContactRecords detail={detail} />
   </>
@@ -207,6 +209,9 @@ function RecordField({ value, label, type, required, disabled, onChange }) {
 }
 
 function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPollAt }) {
+  const savedSelection = detail.research_meta?.selection || (detail.research_meta?.sources
+    ? Object.fromEntries(['website', 'web_search', 'reputation', 'apollo'].map(name => [name, Boolean(detail.research_meta.sources[name])]))
+    : { website: true, web_search: true, reputation: true, apollo: false })
   const [name, setName] = useState(detail.name)
   const [logoId, setLogoId] = useState(detail.preferred_logo_id ?? '')
   const [records, setRecords] = useState(detail.records)
@@ -219,11 +224,21 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
   const total = countRecords(detail.records)
   // Reputation observations are unverified, so they start unticked.
   const [webSelected, setWebSelected] = useState((detail.web_findings || []).filter(f => f.kind !== 'reputation_search').map(f => f.id))
-  const count = countRecords(selected) + apolloSelected.length + webSelected.length
-  const [webSearch, setWebSearch] = useState(true)
-  const [reputation, setReputation] = useState(true)
+  const [website, setWebsite] = useState(savedSelection.website)
+  const [webSearch, setWebSearch] = useState(savedSelection.web_search)
+  const [reputation, setReputation] = useState(savedSelection.reputation)
   // Apollo enrichment spends a credit, so it starts unticked.
-  const [enrichApollo, setEnrichApollo] = useState(false)
+  const [enrichApollo, setEnrichApollo] = useState(savedSelection.apollo)
+  const visibleWeb = (detail.web_findings || []).filter(f => f.kind === 'web_search' ? webSearch : reputation)
+  const visibleWebIds = webSelected.filter(id => visibleWeb.some(f => f.id === id))
+  const visibleSelection = website ? selected : Object.fromEntries(recordKinds.map(([kind]) => [kind, []]))
+  const visibleApolloKeys = SHOW_APOLLO_REVIEW && enrichApollo ? apolloSelected : []
+  const count = countRecords(visibleSelection) + visibleApolloKeys.length + visibleWebIds.length
+  const sourceSelection = { website, web_search: webSearch, reputation, apollo: enrichApollo }
+  const progressMeta = detail.research_meta?.sources ? {
+    ...detail.research_meta,
+    sources: Object.fromEntries(Object.entries(detail.research_meta.sources).filter(([source]) => sourceSelection[source])),
+  } : null
   useEffect(() => { onDirty(dirty) }, [dirty, onDirty])
   useEffect(() => {
     function warn(e) { if (dirty) { e.preventDefault(); e.returnValue = '' } }
@@ -244,32 +259,34 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
   async function runResearch(reusePages) {
     const message = reusePages
       ? `Re-extract from the ${detail.pages_saved} saved pages? This paid run replaces current records without re-reading the website. Approved briefs stay unchanged.`
-      : 'Re-read the website? This paid run replaces current research records. Approved briefs stay unchanged.'
-    if (total && !window.confirm(message)) return
+      : `Run the selected sources? ${enrichApollo ? 'Apollo enrichment uses 1 credit plus free contact search; email reveals are not included. ' : ''}${website ? 'Website records will be replaced. ' : ''}Approved briefs stay unchanged.`
+    if ((total || (!reusePages && enrichApollo)) && !window.confirm(message)) return
     const result = await mutate(`/${detail.id}/research`, reusePages
-      ? { reuse_pages: true, web_search: false, reputation: false } : { web_search: webSearch, reputation })
+      ? { website: true, reuse_pages: true, web_search: false, reputation: false, apollo: false }
+      : { website, web_search: webSearch, reputation, apollo: enrichApollo })
+    if (result && reusePages) {
+      setWebsite(true); setWebSearch(false); setReputation(false); setEnrichApollo(false)
+    }
     if (result) setNotice(reusePages ? 'Re-extraction started. Records will update here.' : 'Research started. Page coverage and results will update here.')
-    // Enrich after research has started, so an Apollo error stays on screen and never blocks research.
-    if (result && !reusePages && enrichApollo && detail.apollo_configured) await mutate(`/${detail.id}/apollo/enrich`, { refresh: Boolean(detail.apollo_org) })
   }
   return <>
-    <div className="research-toolbar"><div><h3>Research sources</h3><p>Read up to 12 priority website pages. Enabled OpenAI searches run alongside the crawl; each source adds paid usage.</p>
-      <label className="choice"><input type="checkbox" checked disabled /> Website crawl and record extraction</label>
+    <div className="research-toolbar"><div><h3>Research sources</h3><p>Selected sources run in parallel. Website research reads up to 12 priority pages; disabled sources make no calls and their results are hidden, not deleted.</p>
+      <label className="choice"><input type="checkbox" checked={website} disabled={locked} onChange={e => setWebsite(e.target.checked)} /> Website crawl and record extraction</label>
       <label className="choice"><input type="checkbox" checked={webSearch} disabled={locked} onChange={e => setWebSearch(e.target.checked)} /> OpenAI wider web search</label>
       <label className="choice"><input type="checkbox" checked={reputation} disabled={locked} onChange={e => setReputation(e.target.checked)} /> Public reputation search (not a verified Google review sample)</label>
       <label className="choice"><input type="checkbox" checked={enrichApollo} disabled={locked || !detail.apollo_configured} onChange={e => setEnrichApollo(e.target.checked)} /> Enrich with Apollo (1 credit){!detail.apollo_configured && ' · Apollo not configured'}</label></div>
       <div className="toolbar-actions">
-        {detail.pages_saved > 0 && <button type="button" className="secondary" disabled={locked || dirty} onClick={() => runResearch(true)}>Re-extract from {detail.pages_saved} saved pages</button>}
-        <button type="button" disabled={locked || dirty} onClick={() => runResearch(false)}>{detail.status === 'researching' ? 'Researching…' : 'Run research'}</button></div></div>
+        {website && detail.pages_saved > 0 && <button type="button" className="secondary" disabled={locked || dirty} onClick={() => runResearch(true)}>Re-extract from {detail.pages_saved} saved pages</button>}
+        <button type="button" disabled={locked || dirty || !(website || webSearch || reputation || enrichApollo)} onClick={() => runResearch(false)}>{detail.status === 'researching' ? 'Researching…' : 'Run research'}</button></div></div>
     {notice && detail.status === 'researching' && <p role="status">{notice}</p>}
-    {detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.status !== 'researching' && 'Last run: '}{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${total} records · ${detail.records.people.length} people · ${detail.web_findings?.length || 0} web findings`}</p>}
-    {detail.research_meta?.sources && <ResearchProgress meta={detail.research_meta} active={detail.status === 'researching'} lastPollAt={lastPollAt} />}
+    {website && detail.research_meta?.pages_read > 0 && <p className="coverage">{detail.status !== 'researching' && 'Last run: '}{detail.research_meta.pages_read} pages read · {detail.status === 'researching' ? detail.research_meta.stage : `${total} records · ${detail.records.people.length} people · ${visibleWeb.length} web findings`}</p>}
+    {progressMeta && Object.keys(progressMeta.sources).length > 0 && <ResearchProgress meta={progressMeta} active={detail.status === 'researching'} lastPollAt={lastPollAt} />}
     {detail.research_meta?.warnings?.length > 0 && <details><summary>Research coverage notes ({detail.research_meta.warnings.length})</summary><ul>{detail.research_meta.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul></details>}
     {detail.error && <p role="alert">{detail.error}</p>}
-    {apollo}
+    {enrichApollo && apollo}
     <form className="research-form" onSubmit={save}>
       <label>Firm display name<input required maxLength={160} value={name} disabled={locked} onChange={e => setName(e.target.value)} /></label>
-      <div className="section-title"><h3>Firm branding</h3><small>Choose the preferred saved logo.</small></div>
+      {website && <><div className="section-title"><h3>Firm branding</h3><small>Choose the preferred saved logo.</small></div>
       <label className="choice"><input type="radio" name="logo" value="" checked={logoId === ''} disabled={locked} onChange={() => setLogoId('')} /> No preferred logo</label>
       <div className="logo-options">{detail.brand_assets.map(asset => <label className="logo-option" key={asset.id}>
         <input type="radio" name="logo" checked={String(logoId) === String(asset.id)} disabled={locked} onChange={() => setLogoId(asset.id)} />
@@ -298,18 +315,18 @@ function ResearchEditor({ detail, busy, mutate, approve, onDirty, apollo, lastPo
           {record.original && <span className="badge">Rep edited · the source shows the original website record</span>}
           <div className="source-links"><a href={record.source.url} target="_blank" rel="noreferrer">{record.source.title || 'Website source'} ↗</a></div>
           <details><summary>Original supporting passage</summary><blockquote>{record.evidence}</blockquote></details>
-        </article>)}</div></details>)}
+        </article>)}</div></details>)}</>}
       <div className="review-actions"><button disabled={locked || !dirty}>Save research edits</button>
         <span role="status">{dirty ? 'Unsaved edits — save before approving or re-running research.' : 'All edits saved.'}</span></div>
     </form>
-    {detail.web_findings?.length > 0 && <div className="section-title"><h3>Review web findings</h3>
+    {visibleWeb.length > 0 && <div className="section-title"><h3>Review web findings</h3>
       <small>Cited from public sources other than the firm's website. Not editable; reputation observations start unticked.</small></div>}
-    <WebReview items={detail.web_findings || []} selected={webSelected} setSelected={setWebSelected} />
-    {SHOW_APOLLO_REVIEW && detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
+    <WebReview items={visibleWeb} selected={webSelected} setSelected={setWebSelected} />
+    {SHOW_APOLLO_REVIEW && enrichApollo && detail.apollo_findings?.length > 0 && <div className="section-title"><h3>Review Apollo findings</h3>
       <small>From Apollo's database, not the firm's website. Not editable; untick anything that looks wrong.</small></div>}
-    {SHOW_APOLLO_REVIEW && <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />}
+    {SHOW_APOLLO_REVIEW && enrichApollo && <ApolloReview items={detail.apollo_findings || []} selected={apolloSelected} setSelected={setApolloSelected} />}
     <div className="approval-bar"><div><strong>{count} {count === 1 ? 'item' : 'items'} selected</strong><p>Approval saves a fixed copy for output generation. It makes no paid API call.</p></div>
-      <button disabled={locked || dirty || !count} onClick={() => approve(selected, apolloSelected, webSelected)}>Approve &amp; create outputs →</button></div>
+      <button disabled={locked || dirty || !count} onClick={() => approve(visibleSelection, visibleApolloKeys, visibleWebIds)}>Approve &amp; create outputs →</button></div>
   </>
 }
 
@@ -392,7 +409,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     event.preventDefault()
     const body = { approval_id: Number(selectedId), formats, instructions, logo_id: logo === '' ? null : Number(logo) }
     const signature = JSON.stringify(body)
-    if (pendingRequest.current?.signature !== signature) pendingRequest.current = { signature, key: crypto.randomUUID() }
+    if (pendingRequest.current?.signature !== signature) pendingRequest.current = { signature, key: requestKey() }
     const result = await mutate(`/${detail.id}/outputs`, { ...body, request_key: pendingRequest.current.key })
     if (result) {
       setNotice(`Run #${result.id} accepted. You can leave this tab; downloads are saved to the firm.`)
@@ -406,7 +423,7 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
     setNotice('Failed formats selected for a new run. Check the branding and instructions, then generate.')
   }
   return <>
-    <h3>Create a sales pack</h3><p>OpenAI writes the copy from the approved records. Acctivity brand templates build each file, and validated downloads are saved here.</p>
+    <h3>Create a sales pack</h3><p>OpenAI builds each document in its own sandbox. The approved records, brand kit, fonts, images and selected firm logo are uploaded before generation starts.</p>
     {!detail.proposals.length ? <div className="empty-state">No approved brief yet. Review the records in Research, then choose “Approve &amp; create outputs”.</div> :
       <form className="output-form" onSubmit={generate}>
         <label>Approved brief<select value={selectedId} disabled={busy} onChange={e => onApproval(Number(e.target.value))}>
@@ -431,7 +448,8 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
           <option value="">No firm logo</option>{detail.brand_assets.map(asset => <option key={asset.id} value={asset.id}>Saved firm logo #{asset.id}</option>)}</select></label>
         <label>Sales instructions<textarea maxLength={6000} rows={5} value={instructions} disabled={busy} onChange={e => setInstructions(e.target.value)}
           placeholder="Who is the audience? What should we demonstrate? e.g. Prepare a partner-level discussion focused on family law and a proposed pilot. Do not invent pricing." /></label>
-        <p className="muted">This sends the approved records to OpenAI to write the copy; the logo stays with our templates. Each generation makes one paid API call. No emails or invitations are sent.</p>
+        <p className="muted">Each selected document uses a separate paid OpenAI request and sandbox; up to three build in parallel. Approved records and selected branding are uploaded to OpenAI. No emails or invitations are sent.</p>
+        {running && <p role="status">A run is already active. Its stages and downloads are shown below; generation is disabled to prevent duplicate paid runs.</p>}
         {formats.includes('video') && <p className="muted">The video sends only the firm name and website to Sendspark and uses Sendspark video minutes (beyond the plan's allowance, Sendspark charges). Rendering can take several minutes.</p>}
         <button disabled={busy || running || !formats.length || !approval}>{running ? 'Generation in progress…' : 'Generate selected outputs'}</button>
       </form>}
@@ -457,8 +475,9 @@ function OutputStudio({ detail, busy, mutate, approvalId, onApproval }) {
   </>
 }
 
-function ApolloPanel({ detail, busy, submit }) {
+function ApolloPanel({ detail, busy, submit, resultsOnly = false }) {
   const org = detail.apollo_org
+  if (resultsOnly && !org) return null
   if (!detail.apollo_configured) return <div className="apollo-panel"><h3>Apollo</h3>
     <p>Apollo not configured. Add <code>APOLLO_API_KEY</code> to the server <code>.env</code> to enrich firms from Apollo.</p></div>
   const tech = org?.technology_names?.length ? org.technology_names : (org?.current_technologies || []).map(t => t.name)
@@ -471,7 +490,7 @@ function ApolloPanel({ detail, busy, submit }) {
         <dt>Industries</dt><dd>{industries.join(', ') || 'Not listed'}</dd>
         <dt>Tech stack ({tech.length})</dt><dd>{tech.join(', ') || 'Not listed'}</dd>
       </dl>
-      <button disabled={busy} onClick={() => submit('apollo/enrich', { refresh: true })}>Refresh enrichment (1 credit)</button>
+      {!resultsOnly && <button disabled={busy} onClick={() => submit('apollo/enrich', { refresh: true })}>Refresh enrichment (1 credit)</button>}
     </> : <>
       <p>Look up this firm's headcount, industries and technology in Apollo. Uses 1 Apollo credit.</p>
       <button disabled={busy} onClick={() => submit('apollo/enrich', {})}>Enrich firm (1 credit)</button>
@@ -486,10 +505,11 @@ function ApolloContact({ person }) {
     {person.match_confidence && <><br /><small>Match confidence: {person.match_confidence}</small></>}</>
 }
 
-function ApolloContacts({ detail, busy, submit }) {
+function ApolloContacts({ detail, busy, submit, initialResult }) {
   const [titles, setTitles] = useState(defaultTitles)
   const [seniorities, setSeniorities] = useState('')
-  const [result, setResult] = useState(null)
+  const [resultOverride, setResult] = useState(null)
+  const result = resultOverride || initialResult || null
   const [selected, setSelected] = useState([])
   const [searching, setSearching] = useState(false)
   const [error, setError] = useState('')
@@ -508,11 +528,11 @@ function ApolloContacts({ detail, busy, submit }) {
     ? `No one matched those titles, so this list comes from a seniority search (${result.seniorities.join(', ')}).`
     : `Found by ${result.search === 'titles' ? 'title' : result.search === 'seniorities' ? 'seniority' : 'title and seniority'} search.`)
   return <div className="apollo-panel"><h3>Apollo contacts</h3>
-    <form className="apollo-search" onSubmit={find}>
+    <details><summary>Refine contact search (optional, free)</summary><form className="apollo-search" onSubmit={find}>
       <label>Job titles (comma-separated)<input value={titles} onChange={e => setTitles(e.target.value)} /></label>
       <label>Seniorities (optional, e.g. owner, director)<input value={seniorities} onChange={e => setSeniorities(e.target.value)} /></label>
       <button disabled={searching}>{searching ? 'Searching…' : 'Find people (free)'}</button>
-    </form>
+    </form></details>
     <p>Searching is free and shows only first names. If no titles match, Apollo is searched by seniority instead.</p>
     {error && <p role="alert">{error}</p>}
     {result && <>

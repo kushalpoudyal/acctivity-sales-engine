@@ -93,6 +93,14 @@ Local prototype, single process, **no auth** (keep both dev servers on loopback)
 **Personalised AI video (19/11, branch `sendspark-ai-video`):** optional output that sends the approved firm name to
 the Sendspark "Stalktivity" campaign and saves the video's share link. See `SENDSPARK.md` → Our setup.
 
+**Demo environment logins and guards (19/11, branch `demo-logins`, issue #17):** `demo_logins.py` gives the seeder/wipe a
+`DemoFirm(firm_id)` with `.service(user_id)` (shared client-credentials login acting as firm + staff, token cached) and
+`.rep()` (the rep's own access token, memory only, handed over by the host-side `Hack_A_API/tools/Send-RepLogin.ps1`
+from the tray app's DPAPI cache, or pasted; never refreshed). Every write checks the guards: `DEMO_ENVIRONMENT=test`,
+`DEMO_FIRM_ALLOWLIST`, rep token current/test/same firm, Management `isTestFirm`. Endpoints: `GET|PUT|DELETE /api/v1/demo/rep-login`,
+read-only smoke check `GET /api/v1/demo/firms/{id}/check`. Settings: `DEMO_*`, `ACCTIVITY_*_API_URL`, `ACCTIVITY_SERVICE_*`
+(see `Hack_A_API/api/README.md`).
+
 **Not built yet:** per-prospect images (outputs use the brand illustrations), Acctivity product content for proposals, live Acctivity demo environment, auth.
 
 ## Notes on the feed (Claude, 18/11, unverified until probed)
@@ -120,7 +128,7 @@ the Sendspark "Stalktivity" campaign and saves the video's share link. See `SEND
 - Q2: what "prospects" means as an output
 - Q3: input shape: website URL only (per brief), or also a name/LinkedIn/CSV list?
   As built: website + optional display name.
-- Q4: does "tailored demo environment" (in the brief) stay in scope? As built: JSON demo export only;
+- Q4: ~~does "tailored demo environment" stay in scope?~~ answered 19/11: yes, seed a per-rep Acctivity test firm per prospect (design in TECHNICAL_DESIGN.md, platform facts in ACCTIVITY.md). Previously:
   a live Acctivity environment needs an agreed deployment API, required fields and a safe demo-account policy.
 - Q5: LLM provider / image generation / slide-deck tool. As built: OpenAI for research + copy; our own python-pptx /
   python-docx / reportlab templates for the files.
@@ -133,4 +141,5 @@ the Sendspark "Stalktivity" campaign and saves the video's share link. See `SEND
 - [Technical design and implementation status](./TECHNICAL_DESIGN.md): research, approvals, normalised research records, branding and template-built PPTX/DOCX/PDF downloads.
 
 - **Sendspark** (videos): `SENDSPARK.md`. API + webhooks on Growth ($99/mo); fills variables into one recorded base video; async, poll or webhook.
+- **Acctivity** (demo environment seeding): `ACCTIVITY.md`. Where firm/user/matter/time data lives, service-login probe results on test.
 - **Apollo** (input approach 2): `APOLLO.md`. Org enrich (1 credit) → people search (free, names obfuscated) → people match (1 credit email, +8 mobile). Firm search: 1 credit/page, **allowed** on our plan (needs a law-practice filter to drop recruiters). Probe: `Hack_A_API/api/apollo_probe.py`.

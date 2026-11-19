@@ -55,11 +55,12 @@ connecting a live Acctivity system.
   record ids per table copies them into an immutable snapshot. Later edits do not
   change it. No paid call is made at approval.
 - **Create outputs:** choose an approval, PowerPoint (`pptx`), Word (`docx`),
-  welcome PDF (`pdf`), optional saved logo and sales instructions. One paid OpenAI
-  call writes short copy (titles, summary, proposed opportunities, pilot, next steps,
-  demo agenda) from the approved records; `documents.py` then builds each file from
-  our Acctivity brand templates. Each file is validated and saved in SQLite, and reports its
-  stage and timings; the streamed copy call shows a live draft.
+  welcome PDF (`pdf`), optional saved logo and sales instructions. Each selected
+  document uses its own paid OpenAI request and Code Interpreter sandbox, with
+  up to three in parallel. Before generation, the server uploads `brand-assets.zip`,
+  `approved-firm.json` and the selected firm logo. The archive contains the brand
+  guide, logos, fonts, licensed images and background, not the demo video.
+  OpenAI creates the actual files; the server validates and saves downloads in SQLite.
 
 `POST /api/v1/firms/{id}/outputs` accepts:
 
@@ -96,20 +97,22 @@ use the Python SDK's streaming interface. Search requests explicitly enable
 is not an approved finding; final cited results become available per source even
 while other source tasks are running.
 
-Each output file tracks its own stage, timestamps and a bounded preview of the
-streamed copy call (the structured copy as it arrives). The UI uses an
+Each output file tracks its own stage, container ID, timestamps and bounded
+streamed response preview. Stages include asset uploads, code generation/execution,
+download and validation. The UI uses an
 indeterminate activity indicator with actual stages and elapsed/last-activity
 times. File downloads appear as each file is saved, without waiting for the
 others. Older runs cannot gain event history retroactively.
 
 The shared model defaults to `gpt-6.1-sol`. A selected logo is copied into the job
-so later research cannot change that run's branding; it is used by our templates
-only and never sent to OpenAI. No live tenant/user creation, email sending or
+so later research cannot change that run's branding; it is uploaded to each selected
+document's sandbox along with the approved records. No live tenant/user creation, email sending or
 invitations occur. Keep this unauthenticated prototype on loopback, not a public network.
 
 ### Acctivity brand kit and templates
 
-`brand/BRAND.md` is the brand guide; `documents.py` implements it. The templates use
+`brand/BRAND.md` is the brand guide uploaded to the sandbox. The existing
+`documents.py` local templates remain for the older proposal endpoint. The kit uses
 the Acctivity logo and mark, the palette (Slate Grey `#3D443D` and Steel Blue `#4396BA`,
 with Light Pink, Gold and Light Grey accents), Lora headings and Inter body text, and
 the watercolour background and illustrations from `brand/`.
@@ -141,16 +144,62 @@ cannot upload or edit them. Sendspark identifies prospects by email, so each fir
 plus-address on `SENDSPARK_PROSPECT_EMAIL` (e.g. `sales+cbdlaw-com-au@...`). The option is disabled
 until all five `SENDSPARK_*` settings are in `.env`. A video-only run makes no OpenAI call.
 
+### Demo environment logins and guards
+
+`demo_logins.py` is how the demo seeder and wipe reach a rep's Acctivity **test** firm. It uses two logins:
+
+- **Service login**: the shared client-credentials login (`ACCTIVITY_SERVICE_*` in `.env`; ask the backend
+  team). It acts as the firm and a staff member through headers, with the country taken from the firm's
+  details. The token is cached until a minute before it expires.
+- **Rep login**: the rep's own access token for their demo firm, kept in memory only (never logged or stored).
+  On the Windows host (not in Docker), with the Acctivity tray app signed in on test, run
+  `pwsh -File Hack_A_API\tools\Send-RepLogin.ps1`. It decrypts the tray app's token cache (DPAPI, current
+  user) and sends only the access token to `PUT /api/v1/demo/rep-login`. It never touches the refresh token,
+  because redeeming it would sign the tray app out. If the token has expired, open the Acctivity tray app (test)
+  to refresh it and run the script again. `-DryRun` only reports the expiry. The fallback is pasting a token
+  (`PUT /api/v1/demo/rep-login` with `{"access_token": "...", "source": "pasted"}`). Restarting the API
+  forgets the token.
+
+`GET /api/v1/demo/rep-login` reports `found` / `pasted` / `expired` / `missing` with the expiry and
+firm id, never the token; `DELETE` forgets it.
+
+In code: `firm = DemoFirm(firm_id)`, then `firm.service(user_id).post("acctivity", "v1/activities", json=...)`
+or `firm.rep().patch("management", "v1/firm/name", json=...)`. Paths are relative to each service's `/api/`
+root. Every write (any method but GET) checks the guards first and raises `GuardRefused` (403) if any fails:
+
+- `DEMO_ENVIRONMENT` is `test`;
+- the firm id is in `DEMO_FIRM_ALLOWLIST` (comma-separated);
+- the rep login is current, from the test environment, and its firm id claim is this firm;
+- Management `GET v1/firm` returns this firm with `isTestFirm` true (read once per `DemoFirm`).
+
+Failures raise `DemoLoginError` with `upstream_status`; nothing retries.
+
+**Smoke test (read-only).** Fill the settings in `.env`, restart the API, send the rep login with the
+script above, then:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:9001/api/v1/demo/firms/<firm id>/check | ConvertTo-Json -Depth 5
+```
+
+It reads `v1/firm` and `v1/users` with both logins (status, firm name, `isTestFirm`, user count) and
+reports whether writes would pass the guards. It writes nothing.
+
 ### Focused checks
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents test_apollo test_find_firms test_apollo_contacts test_apollo_findings test_web_research test_model_stream test_sendspark
+.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents test_apollo test_find_firms test_apollo_contacts test_apollo_findings test_web_research test_model_stream test_sendspark test_demo_logins
 ```
 Use `OPENAI_RESEARCH_MODEL` to override the research model.
 The default model for research and file generation is `gpt-6.1-sol`; `OPENAI_MODEL`
 overrides the shared default, with `OPENAI_RESEARCH_MODEL` and `OPENAI_DECK_MODEL`
-(the copy call) overriding individual operations. API model access depends on the
+(the sandbox call) overriding individual operations. API model access depends on the
 OpenAI account.
+
+Website extraction uses low reasoning effort and concise descriptions, biographies
+and short verbatim evidence quotes to reduce latency. It retains all named people
+and roles found in the selected pages; ten thousand output tokens is a cap, not
+a target. A truncated response still fails validation rather than saving partial
+JSON. Runtime depends on website size and model availability.
 
 ### Parallel research sources
 
@@ -171,6 +220,29 @@ kind's earlier findings, while a failed or disabled search keeps them. Approve t
 (`"web_findings": [ids]`); approved ones go into the snapshot's `web` list, appear in the
 Word proposal under "From the wider web" or "Public reputation (unverified)", and their
 text (never personal contact data) informs the copy call.
+
+### Source selection and Apollo in the same research request
+
+The research endpoint accepts all source flags in one body:
+
+```json
+{"website": true, "web_search": true, "reputation": false, "apollo": true}
+```
+
+Defaults preserve website/web/reputation research; Apollo defaults off. At least
+one source must be selected. Only enabled sources are scheduled, up to four in
+parallel, and `research_meta.selection` records the choice for refresh/reconnect.
+The UI hides disabled-source progress/results and excludes hidden items from
+approval, without deleting their previously saved records.
+
+Apollo performs one organisation enrichment (1 credit) and the existing free
+role/seniority contact search inside the job. Candidate contacts are returned in
+`research_meta.sources.apollo.contact_search`, ready to select without a second
+search click. A repeated paid enrichment requires the rep to confirm the new
+research run. No automatic contact-email or mobile reveal is performed.
+Missing required provider configuration is rejected before the job starts;
+an Apollo-only run does not require an OpenAI key. Other sources retain their
+results if Apollo fails. Re-extraction of saved pages always selects website only.
 Reputation observations are not a verified Google review sample and are unchecked
 for approval by default. They must not be presented as verified reviews, ratings,
 testimonials or established firm facts in output material. No Google Maps scraping
