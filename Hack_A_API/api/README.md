@@ -171,11 +171,50 @@ partners covering the main areas, senior associate, associate, paralegal, then t
 15–25 matters split by practice-area weight (1 + people per area); unmatched areas use the closest template
 with a `template_fallback` flag. Time: every weekday for 3–4 weeks ending today, 4–6 h per person per day
 in 0.1 h steps; 2–3 matters invoiced so about 80% of hours stay unbilled.
+### Demo environment logins and guards
+
+`demo_logins.py` is how the demo seeder and wipe reach a rep's Acctivity **test** firm. It uses two logins:
+
+- **Service login**: the shared client-credentials login (`ACCTIVITY_SERVICE_*` in `.env`; ask the backend
+  team). It acts as the firm and a staff member through headers, with the country taken from the firm's
+  details. The token is cached until a minute before it expires.
+- **Rep login**: the rep's own access token for their demo firm, kept in memory only (never logged or stored).
+  On the Windows host (not in Docker), with the Acctivity tray app signed in on test, run
+  `pwsh -File Hack_A_API\tools\Send-RepLogin.ps1`. It decrypts the tray app's token cache (DPAPI, current
+  user) and sends only the access token to `PUT /api/v1/demo/rep-login`. It never touches the refresh token,
+  because redeeming it would sign the tray app out. If the token has expired, open the Acctivity tray app (test)
+  to refresh it and run the script again. `-DryRun` only reports the expiry. The fallback is pasting a token
+  (`PUT /api/v1/demo/rep-login` with `{"access_token": "...", "source": "pasted"}`). Restarting the API
+  forgets the token.
+
+`GET /api/v1/demo/rep-login` reports `found` / `pasted` / `expired` / `missing` with the expiry and
+firm id, never the token; `DELETE` forgets it.
+
+In code: `firm = DemoFirm(firm_id)`, then `firm.service(user_id).post("acctivity", "v1/activities", json=...)`
+or `firm.rep().patch("management", "v1/firm/name", json=...)`. Paths are relative to each service's `/api/`
+root. Every write (any method but GET) checks the guards first and raises `GuardRefused` (403) if any fails:
+
+- `DEMO_ENVIRONMENT` is `test`;
+- the firm id is in `DEMO_FIRM_ALLOWLIST` (comma-separated);
+- the rep login is current, from the test environment, and its firm id claim is this firm;
+- Management `GET v1/firm` returns this firm with `isTestFirm` true (read once per `DemoFirm`).
+
+Failures raise `DemoLoginError` with `upstream_status`; nothing retries.
+
+**Smoke test (read-only).** Fill the settings in `.env`, restart the API, send the rep login with the
+script above, then:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:9001/api/v1/demo/firms/<firm id>/check | ConvertTo-Json -Depth 5
+```
+
+It reads `v1/firm` and `v1/users` with both logins (status, firm name, `isTestFirm`, user count) and
+reports whether writes would pass the guards. It writes nothing.
 
 ### Focused checks
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents test_apollo test_find_firms test_apollo_contacts test_apollo_findings test_web_research test_model_stream test_sendspark test_demo_plan
+.\.venv\Scripts\python.exe -m unittest -v test_prospects test_firm_research test_outputs test_documents test_apollo test_find_firms test_apollo_contacts test_apollo_findings test_web_research test_model_stream test_sendspark test_demo_plan test_demo_logins
 ```
 Without a host Python, run the suite in the API image:
 `docker run --rm -v "<repo>/Hack_A_API/api:/app" -w /app acctivity-sales-engine-api python -m unittest`.
