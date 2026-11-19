@@ -251,7 +251,8 @@ class FirmClient:
         return headers
 
     def request(self, method: str, service: str, path: str, **kwargs):
-        """Send one request (`path` relative to the service's /api/ root, e.g. `v1/activities`). Returns the
+        """Send one request (`path` relative to the service's /api/ root, e.g. `v1/activities`; `headers` adds to
+        the login headers, never replaces them). Returns the
         parsed JSON (None when empty). Raises DemoLoginError on any failure; never retries."""
         method = method.upper()
         if method != "GET":
@@ -261,7 +262,8 @@ class FirmClient:
             raise ValueError(f"Unknown service {service!r}")
         if not base:
             raise DemoLoginError(f"{SERVICES[service]} is not set in the server .env.", 503)
-        headers = {"Accept": "application/json", **self._headers(service, path)}
+        # Extra headers (e.g. a row version) may not override the login and firm headers.
+        headers = {"Accept": "application/json", **kwargs.pop("headers", {}), **self._headers(service, path)}
         try:
             with httpx.Client(base_url=base.rstrip("/") + "/", timeout=TIMEOUT, transport=_transport) as client:
                 response = client.request(method, path.lstrip("/"), headers=headers, **kwargs)

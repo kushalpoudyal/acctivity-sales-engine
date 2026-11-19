@@ -139,6 +139,18 @@ def initialize():
             firm_id INTEGER PRIMARY KEY REFERENCES firms(id), approval_id INTEGER NOT NULL,
             plan TEXT NOT NULL, errors TEXT NOT NULL DEFAULT '[]', edited INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL, updated_at TEXT NOT NULL)""")
+        # Demo seeder (demo_seeder.py): one row per run of a prospect's plan into the demo firm (the plan is copied
+        # in, so a resumed run writes what it started with), and one row per plan item with the external id it got.
+        db.execute("""CREATE TABLE IF NOT EXISTS seed_runs (
+            id INTEGER PRIMARY KEY, firm_id INTEGER NOT NULL REFERENCES firms(id), demo_firm_id TEXT NOT NULL,
+            plan TEXT NOT NULL, totals TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'queued', step TEXT, error TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, finished_at TEXT)""")
+        db.execute("""CREATE TABLE IF NOT EXISTS seed_run_items (
+            run_id INTEGER NOT NULL REFERENCES seed_runs(id), step TEXT NOT NULL, item_key TEXT NOT NULL,
+            external_id TEXT, status TEXT NOT NULL, error TEXT, updated_at TEXT NOT NULL,
+            PRIMARY KEY(run_id,step,item_key))""")
+        db.execute("""UPDATE seed_runs SET status='failed',error='Seeding interrupted by a server restart. Resume it.'
+                      WHERE status IN ('queued','running')""")
         file_columns = {row["name"] for row in db.execute("PRAGMA table_info(output_files)")}
         for column, definition in [
             ("stage", "TEXT NOT NULL DEFAULT 'Queued'"), ("container_id", "TEXT"),
