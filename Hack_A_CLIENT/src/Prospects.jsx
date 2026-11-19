@@ -3,6 +3,7 @@ import './Prospects.css'
 import logo from './assets/logo.png'
 import firmIcon from './assets/icon-firm.svg'
 import FindFirms from './FindFirms'
+import DemoEnvironment from './DemoEnvironment'
 import { requestKey } from './requestKey'
 
 // Find firms (Apollo search) is hidden for now; set to true to show it again.
@@ -156,6 +157,8 @@ export default function Prospects() {
 function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt, onDelete }) {
   const [tab, setTab] = useState('research')
   const [approvalId, setApprovalId] = useState(null)
+  // The Demo tab mounts on first visit (it reads the demo firm), then stays mounted to keep plan edits.
+  const [demoSeen, setDemoSeen] = useState(false)
   // Approval sends the ticked record ids per kind, Apollo finding keys and web finding ids.
   async function approve(selection, apolloKeys, webIds) {
     const result = await mutate(`/${detail.id}/approvals`, { brief_token: detail.brief_token, ...selection, apollo_findings: apolloKeys, web_findings: webIds })
@@ -178,12 +181,17 @@ function FirmWorkspace({ detail, busy, dirty, mutate, onDirty, lastPollAt, onDel
     <div className="workspace-tabs" role="tablist" aria-label="Firm workspace">
       <button id="research-tab" role="tab" aria-selected={tab === 'research'} aria-controls="research-panel" onClick={() => setTab('research')}>01 &nbsp; Research</button>
       <button id="outputs-tab" role="tab" aria-selected={tab === 'outputs'} aria-controls="outputs-panel" onClick={() => setTab('outputs')}>02 &nbsp; Create outputs</button>
+      <button id="demo-tab" role="tab" aria-selected={tab === 'demo'} aria-controls="demo-panel" disabled={!detail.proposals.length}
+        title={detail.proposals.length ? undefined : 'Needs an approved research snapshot'} onClick={() => { setTab('demo'); setDemoSeen(true) }}>03 &nbsp; Demo environment</button>
     </div>
     <div id="research-panel" role="tabpanel" aria-labelledby="research-tab" hidden={tab !== 'research'}>
       <ResearchEditor key={detail.brief_token} detail={detail} busy={busy} mutate={mutate} approve={approve} onDirty={onDirty} apollo={apollo} lastPollAt={lastPollAt} />
     </div>
     <div id="outputs-panel" role="tabpanel" aria-labelledby="outputs-tab" hidden={tab !== 'outputs'}>
       <OutputStudio detail={detail} busy={busy} mutate={mutate} approvalId={approvalId} onApproval={setApprovalId} />
+    </div>
+    <div id="demo-panel" role="tabpanel" aria-labelledby="demo-tab" hidden={tab !== 'demo'}>
+      {demoSeen && detail.proposals.length > 0 && <DemoEnvironment detail={detail} />}
     </div>
   </>
 }
